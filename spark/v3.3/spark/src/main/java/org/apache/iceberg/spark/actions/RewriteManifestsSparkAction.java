@@ -166,6 +166,10 @@ public class RewriteManifestsSparkAction
     int targetNumManifests = targetNumManifests(totalSizeBytes);
     int targetNumManifestEntries = targetNumManifestEntries(numEntries, targetNumManifests);
 
+    if (targetNumManifests == 1 && matchingManifests.size() == 1) {
+      return BaseRewriteManifestsActionResult.empty();
+    }
+
     Dataset<Row> manifestEntryDF = buildManifestEntryDF(matchingManifests);
 
     List<ManifestFile> newManifests;

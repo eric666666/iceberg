@@ -328,6 +328,9 @@ class FloatLiteral(Literal[float]):
     def __ge__(self, other: Any) -> bool:
         return self._value32 >= other
 
+    def __hash__(self) -> int:
+        return hash(self._value32)
+
     @singledispatchmethod
     def to(self, type_var: IcebergType) -> Literal:  # type: ignore
         raise TypeError(f"Cannot convert FloatLiteral into {type_var}")
@@ -418,6 +421,10 @@ class TimestampLiteral(Literal[int]):
 
     @to.register(TimestampType)
     def _(self, _: TimestampType) -> Literal[int]:
+        return self
+
+    @to.register(TimestamptzType)
+    def _(self, _: TimestamptzType) -> Literal[int]:
         return self
 
     @to.register(DateType)
@@ -557,6 +564,14 @@ class StringLiteral(Literal[str]):
             raise ValueError(
                 f"Could not convert {self.value} into a {type_var}, scales differ {type_var.scale} <> {abs(dec.as_tuple().exponent)}"
             )
+
+    @to.register(BooleanType)
+    def _(self, type_var: BooleanType) -> Literal[bool]:
+        value_upper = self.value.upper()
+        if value_upper in ["TRUE", "FALSE"]:
+            return BooleanLiteral(value_upper == "TRUE")
+        else:
+            raise ValueError(f"Could not convert {self.value} into a {type_var}")
 
     def __repr__(self) -> str:
         return f"literal({repr(self.value)})"

@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,9 +31,11 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.AssertHelpers;
 import org.apache.iceberg.CatalogProperties;
@@ -40,7 +43,9 @@ import org.apache.iceberg.DataFiles;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.SnapshotRef;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.CatalogTests;
 import org.apache.iceberg.catalog.SessionCatalog;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -49,13 +54,19 @@ import org.apache.iceberg.jdbc.JdbcCatalog;
 import org.apache.iceberg.metrics.MetricsReport;
 import org.apache.iceberg.metrics.MetricsReporter;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.rest.RESTCatalogAdapter.HTTPMethod;
+import org.apache.iceberg.rest.RESTSessionCatalog.SnapshotMode;
+import org.apache.iceberg.rest.auth.AuthSessionUtil;
+import org.apache.iceberg.rest.auth.OAuth2Properties;
+import org.apache.iceberg.rest.auth.OAuth2Util;
 import org.apache.iceberg.rest.responses.ConfigResponse;
 import org.apache.iceberg.rest.responses.ErrorResponse;
 import org.apache.iceberg.rest.responses.LoadTableResponse;
 import org.apache.iceberg.rest.responses.OAuthTokenResponse;
 import org.apache.iceberg.types.Types;
 import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.server.handler.gzip.GzipHandler;
 import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
@@ -140,7 +151,7 @@ public class TestRESTCatalog extends CatalogTests<RESTCatalog> {
     servletContext.setVirtualHosts(null);
     servletContext.setGzipHandler(new GzipHandler());
 
-    this.httpServer = new Server(8181);
+    this.httpServer = new Server(0);
     httpServer.setHandler(servletContext);
     httpServer.start();
 
@@ -159,7 +170,10 @@ public class TestRESTCatalog extends CatalogTests<RESTCatalog> {
     restCatalog.initialize(
         "prod",
         ImmutableMap.of(
-            CatalogProperties.URI, "http://localhost:8181/", "credential", "catalog:12345"));
+            CatalogProperties.URI,
+            "http://localhost:" + localPort() + "/",
+            "credential",
+            "catalog:12345"));
   }
 
   @SuppressWarnings("unchecked")
@@ -734,6 +748,113 @@ public class TestRESTCatalog extends CatalogTests<RESTCatalog> {
         ImmutableMap.of("Authorization", "Bearer client-credentials-token:sub=table-user"));
   }
 
+  @Test
+  public void testSnapshotParams() {
+    assertThat(SnapshotMode.ALL.params()).isEqualTo(ImmutableMap.of("snapshots", "all"));
+
+    assertThat(SnapshotMode.REFS.params()).isEqualTo(ImmutableMap.of("snapshots", "refs"));
+  }
+
+  @Test
+  public void testTableSnapshotLoading() {
+    RESTCatalogAdapter adapter = Mockito.spy(new RESTCatalogAdapter(backendCatalog));
+
+    RESTCatalog catalog =
+        new RESTCatalog(SessionCatalog.SessionContext.createEmpty(), (config) -> adapter);
+    catalog.initialize(
+        "test",
+        ImmutableMap.of(
+            CatalogProperties.URI,
+            "ignored",
+            CatalogProperties.FILE_IO_IMPL,
+            "org.apache.iceberg.io.InMemoryFileIO",
+            // default loading to refs only
+            "snapshot-loading-mode",
+            "refs"));
+
+    // Create a table with multiple snapshots
+    Table table = catalog.createTable(TABLE, SCHEMA);
+    table
+        .newFastAppend()
+        .appendFile(
+            DataFiles.builder(PartitionSpec.unpartitioned())
+                .withPath("/path/to/data-a.parquet")
+                .withFileSizeInBytes(10)
+                .withRecordCount(2)
+                .build())
+        .commit();
+
+    table
+        .newFastAppend()
+        .appendFile(
+            DataFiles.builder(PartitionSpec.unpartitioned())
+                .withPath("/path/to/data-b.parquet")
+                .withFileSizeInBytes(10)
+                .withRecordCount(2)
+                .build())
+        .commit();
+
+    ResourcePaths paths = ResourcePaths.forCatalogProperties(Maps.newHashMap());
+
+    // Respond with only referenced snapshots
+    Answer<?> refsAnswer =
+        invocation -> {
+          LoadTableResponse originalResponse = (LoadTableResponse) invocation.callRealMethod();
+          TableMetadata fullTableMetadata = originalResponse.tableMetadata();
+
+          Set<Long> referencedSnapshotIds =
+              fullTableMetadata.refs().values().stream()
+                  .map(SnapshotRef::snapshotId)
+                  .collect(Collectors.toSet());
+
+          TableMetadata refsMetadata =
+              fullTableMetadata.removeSnapshotsIf(
+                  s -> !referencedSnapshotIds.contains(s.snapshotId()));
+
+          return LoadTableResponse.builder()
+              .withTableMetadata(refsMetadata)
+              .addAllConfig(originalResponse.config())
+              .build();
+        };
+
+    Mockito.doAnswer(refsAnswer)
+        .when(adapter)
+        .execute(
+            eq(HTTPMethod.GET),
+            eq(paths.table(TABLE)),
+            eq(ImmutableMap.of("snapshots", "refs")),
+            any(),
+            eq(LoadTableResponse.class),
+            any(),
+            any());
+
+    Table refsTables = catalog.loadTable(TABLE);
+
+    assertThat(refsTables.currentSnapshot()).isEqualTo(table.currentSnapshot());
+    // verify that the table was loaded with the refs argument
+    verify(adapter, times(1))
+        .execute(
+            eq(HTTPMethod.GET),
+            eq(paths.table(TABLE)),
+            eq(ImmutableMap.of("snapshots", "refs")),
+            any(),
+            eq(LoadTableResponse.class),
+            any(),
+            any());
+
+    // verify that all snapshots are loaded when referenced
+    assertThat(refsTables.snapshots()).containsExactlyInAnyOrderElementsOf(table.snapshots());
+    verify(adapter, times(1))
+        .execute(
+            eq(HTTPMethod.GET),
+            eq(paths.table(TABLE)),
+            eq(ImmutableMap.of("snapshots", "all")),
+            any(),
+            eq(LoadTableResponse.class),
+            any(),
+            any());
+  }
+
   public void testTableAuth(
       String catalogToken,
       Map<String, String> credentials,
@@ -1098,7 +1219,7 @@ public class TestRESTCatalog extends CatalogTests<RESTCatalog> {
         "prod",
         ImmutableMap.of(
             CatalogProperties.URI,
-            "http://localhost:8181/",
+            "http://localhost:" + localPort() + "/",
             "credential",
             "catalog:12345",
             CatalogProperties.METRICS_REPORTER_IMPL,
@@ -1132,5 +1253,379 @@ public class TestRESTCatalog extends CatalogTests<RESTCatalog> {
     public void report(MetricsReport report) {
       COUNTER.incrementAndGet();
     }
+  }
+
+  @Test
+  public void testCatalogExpiredBearerTokenRefreshWithoutCredential() {
+    // expires at epoch second = 1
+    String token =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyLCJleHAiOjF9.gQADTbdEv-rpDWKSkGLbmafyB5UUjTdm9B_1izpuZ6E";
+
+    RESTCatalogAdapter adapter = Mockito.spy(new RESTCatalogAdapter(backendCatalog));
+
+    Map<String, String> contextCredentials = ImmutableMap.of("token", token);
+    SessionCatalog.SessionContext context =
+        new SessionCatalog.SessionContext(
+            UUID.randomUUID().toString(), "user", contextCredentials, ImmutableMap.of());
+
+    RESTCatalog catalog = new RESTCatalog(context, (config) -> adapter);
+
+    catalog.initialize("prod", ImmutableMap.of(CatalogProperties.URI, "ignored", "token", token));
+  }
+
+  @Test
+  public void testCatalogExpiredBearerTokenIsRefreshedWithCredential() {
+    // expires at epoch second = 1
+    String token =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyLCJleHAiOjF9.gQADTbdEv-rpDWKSkGLbmafyB5UUjTdm9B_1izpuZ6E";
+    Map<String, String> emptyHeaders = ImmutableMap.of();
+    Map<String, String> catalogHeaders =
+        ImmutableMap.of("Authorization", "Bearer client-credentials-token:sub=catalog");
+
+    RESTCatalogAdapter adapter = Mockito.spy(new RESTCatalogAdapter(backendCatalog));
+
+    String credential = "catalog:12345";
+    Map<String, String> contextCredentials = ImmutableMap.of("token", token);
+    SessionCatalog.SessionContext context =
+        new SessionCatalog.SessionContext(
+            UUID.randomUUID().toString(), "user", contextCredentials, ImmutableMap.of());
+
+    RESTCatalog catalog = new RESTCatalog(context, (config) -> adapter);
+    // the init token at the catalog level is a valid token
+    catalog.initialize(
+        "prod", ImmutableMap.of(CatalogProperties.URI, "ignored", "credential", credential));
+
+    Assertions.assertFalse(catalog.tableExists(TableIdentifier.of("ns", "table")));
+
+    // call client credentials with no initial auth
+    Mockito.verify(adapter)
+        .execute(
+            eq(HTTPMethod.POST),
+            eq("v1/oauth/tokens"),
+            any(),
+            any(),
+            eq(OAuthTokenResponse.class),
+            eq(emptyHeaders),
+            any());
+
+    Mockito.verify(adapter)
+        .execute(
+            eq(HTTPMethod.GET),
+            eq("v1/config"),
+            any(),
+            any(),
+            eq(ConfigResponse.class),
+            eq(catalogHeaders),
+            any());
+
+    Map<String, String> firstRefreshRequest =
+        ImmutableMap.of(
+            "grant_type", "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token", token,
+            "subject_token_type", "urn:ietf:params:oauth:token-type:access_token",
+            "scope", "catalog");
+    Mockito.verify(adapter)
+        .execute(
+            eq(HTTPMethod.POST),
+            eq("v1/oauth/tokens"),
+            any(),
+            Mockito.argThat(firstRefreshRequest::equals),
+            eq(OAuthTokenResponse.class),
+            eq(OAuth2Util.basicAuthHeaders(credential)),
+            any());
+
+    // verify that a second exchange occurs
+    Map<String, String> secondRefreshRequest =
+        ImmutableMap.of(
+            "grant_type", "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token", token,
+            "subject_token_type", "urn:ietf:params:oauth:token-type:access_token",
+            "scope", "catalog");
+    Mockito.verify(adapter)
+        .execute(
+            eq(HTTPMethod.POST),
+            eq("v1/oauth/tokens"),
+            any(),
+            Mockito.argThat(secondRefreshRequest::equals),
+            eq(OAuthTokenResponse.class),
+            eq(OAuth2Util.basicAuthHeaders(credential)),
+            any());
+
+    Mockito.verify(adapter)
+        .execute(
+            eq(HTTPMethod.GET),
+            eq("v1/namespaces/ns/tables/table"),
+            any(),
+            any(),
+            eq(LoadTableResponse.class),
+            eq(ImmutableMap.of("Authorization", "Bearer token-exchange-token:sub=" + token)),
+            any());
+  }
+
+  @Test
+  public void testCatalogValidBearerTokenIsNotRefreshed() {
+    // expires at epoch second = 19999999999
+    String token =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyLCJleHAiOjE5OTk5OTk5OTk5fQ._3k92KJi2NTyTG6V1s2mzJ__GiQtL36DnzsZSkBdYPw";
+    Map<String, String> catalogHeaders = ImmutableMap.of("Authorization", "Bearer " + token);
+
+    RESTCatalogAdapter adapter = Mockito.spy(new RESTCatalogAdapter(backendCatalog));
+
+    String credential = "catalog:12345";
+    Map<String, String> contextCredentials =
+        ImmutableMap.of("token", token, "credential", credential);
+    SessionCatalog.SessionContext context =
+        new SessionCatalog.SessionContext(
+            UUID.randomUUID().toString(), "user", contextCredentials, ImmutableMap.of());
+
+    RESTCatalog catalog = new RESTCatalog(context, (config) -> adapter);
+    catalog.initialize("prod", ImmutableMap.of(CatalogProperties.URI, "ignored", "token", token));
+
+    Assertions.assertFalse(catalog.tableExists(TableIdentifier.of("ns", "table")));
+
+    Mockito.verify(adapter)
+        .execute(
+            eq(HTTPMethod.GET),
+            eq("v1/config"),
+            any(),
+            any(),
+            eq(ConfigResponse.class),
+            eq(catalogHeaders),
+            any());
+
+    Mockito.verify(adapter)
+        .execute(
+            eq(HTTPMethod.GET),
+            eq("v1/namespaces/ns/tables/table"),
+            any(),
+            any(),
+            eq(LoadTableResponse.class),
+            eq(OAuth2Util.authHeaders(token)),
+            any());
+  }
+
+  @Test
+  public void testCatalogTokenRefreshFailsAndUsesCredentialForRefresh() throws Exception {
+    Map<String, String> emptyHeaders = ImmutableMap.of();
+    Map<String, String> catalogHeaders =
+        ImmutableMap.of("Authorization", "Bearer client-credentials-token:sub=catalog");
+
+    String credential = "catalog:secret";
+    Map<String, String> basicHeaders = OAuth2Util.basicAuthHeaders(credential);
+
+    RESTCatalogAdapter adapter = Mockito.spy(new RESTCatalogAdapter(backendCatalog));
+
+    Answer<OAuthTokenResponse> addOneSecondExpiration =
+        invocation -> {
+          OAuthTokenResponse response = (OAuthTokenResponse) invocation.callRealMethod();
+          return OAuthTokenResponse.builder()
+              .withToken(response.token())
+              .withTokenType(response.tokenType())
+              .withIssuedTokenType(response.issuedTokenType())
+              .addScopes(response.scopes())
+              .setExpirationInSeconds(1)
+              .build();
+        };
+
+    Mockito.doAnswer(addOneSecondExpiration)
+        .when(adapter)
+        .execute(
+            eq(HTTPMethod.POST),
+            eq("v1/oauth/tokens"),
+            any(),
+            any(),
+            eq(OAuthTokenResponse.class),
+            any(),
+            any());
+
+    Map<String, String> firstRefreshRequest =
+        ImmutableMap.of(
+            "grant_type", "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token", "client-credentials-token:sub=catalog",
+            "subject_token_type", "urn:ietf:params:oauth:token-type:access_token",
+            "scope", "catalog");
+
+    // simulate that the token expired when it was about to be refreshed
+    Mockito.doThrow(new RuntimeException("token expired"))
+        .when(adapter)
+        .execute(
+            eq(HTTPMethod.POST),
+            eq("v1/oauth/tokens"),
+            any(),
+            Mockito.argThat(firstRefreshRequest::equals),
+            eq(OAuthTokenResponse.class),
+            eq(catalogHeaders),
+            any());
+
+    Map<String, String> contextCredentials = ImmutableMap.of();
+    SessionCatalog.SessionContext context =
+        new SessionCatalog.SessionContext(
+            UUID.randomUUID().toString(), "user", contextCredentials, ImmutableMap.of());
+
+    // lower retries
+    AuthSessionUtil.setTokenRefreshNumRetries(1);
+
+    RESTCatalog catalog = new RESTCatalog(context, (config) -> adapter);
+    catalog.initialize(
+        "prod", ImmutableMap.of(CatalogProperties.URI, "ignored", "credential", credential));
+
+    Thread.sleep(1_100); // sleep until after 2 refresh calls
+
+    // use the exchanged catalog token
+    Assertions.assertFalse(catalog.tableExists(TableIdentifier.of("ns", "table")));
+
+    // call client credentials with no initial auth
+    Mockito.verify(adapter)
+        .execute(
+            eq(HTTPMethod.POST),
+            eq("v1/oauth/tokens"),
+            any(),
+            any(),
+            eq(OAuthTokenResponse.class),
+            eq(emptyHeaders),
+            any());
+
+    // use the client credential token for config
+    Mockito.verify(adapter)
+        .execute(
+            eq(HTTPMethod.GET),
+            eq("v1/config"),
+            any(),
+            any(),
+            eq(ConfigResponse.class),
+            eq(catalogHeaders),
+            any());
+
+    // verify the first token exchange - since an exception is thrown, we're performing retries
+    Mockito.verify(adapter, times(2))
+        .execute(
+            eq(HTTPMethod.POST),
+            eq("v1/oauth/tokens"),
+            any(),
+            Mockito.argThat(firstRefreshRequest::equals),
+            eq(OAuthTokenResponse.class),
+            eq(catalogHeaders),
+            any());
+
+    // here we make sure that the basic auth header is used after token refresh retries failed
+    Mockito.verify(adapter)
+        .execute(
+            eq(HTTPMethod.POST),
+            eq("v1/oauth/tokens"),
+            any(),
+            Mockito.argThat(firstRefreshRequest::equals),
+            eq(OAuthTokenResponse.class),
+            eq(basicHeaders),
+            any());
+
+    // use the refreshed context token for table load
+    Map<String, String> refreshedCatalogHeader =
+        ImmutableMap.of(
+            "Authorization",
+            "Bearer token-exchange-token:sub=client-credentials-token:sub=catalog");
+    Mockito.verify(adapter)
+        .execute(
+            eq(HTTPMethod.GET),
+            eq("v1/namespaces/ns/tables/table"),
+            any(),
+            any(),
+            eq(LoadTableResponse.class),
+            eq(refreshedCatalogHeader),
+            any());
+  }
+
+  @Test
+  public void testCatalogWithCustomTokenScope() throws Exception {
+    Map<String, String> emptyHeaders = ImmutableMap.of();
+    Map<String, String> catalogHeaders =
+        ImmutableMap.of("Authorization", "Bearer client-credentials-token:sub=catalog");
+
+    RESTCatalogAdapter adapter = Mockito.spy(new RESTCatalogAdapter(backendCatalog));
+
+    Answer<OAuthTokenResponse> addOneSecondExpiration =
+        invocation -> {
+          OAuthTokenResponse response = (OAuthTokenResponse) invocation.callRealMethod();
+          return OAuthTokenResponse.builder()
+              .withToken(response.token())
+              .withTokenType(response.tokenType())
+              .withIssuedTokenType(response.issuedTokenType())
+              .addScopes(response.scopes())
+              .setExpirationInSeconds(1)
+              .build();
+        };
+
+    Mockito.doAnswer(addOneSecondExpiration)
+        .when(adapter)
+        .execute(
+            eq(HTTPMethod.POST),
+            eq("v1/oauth/tokens"),
+            any(),
+            any(),
+            eq(OAuthTokenResponse.class),
+            any(),
+            any());
+
+    Map<String, String> contextCredentials = ImmutableMap.of();
+    SessionCatalog.SessionContext context =
+        new SessionCatalog.SessionContext(
+            UUID.randomUUID().toString(), "user", contextCredentials, ImmutableMap.of());
+
+    RESTCatalog catalog = new RESTCatalog(context, (config) -> adapter);
+    String scope = "custom_catalog_scope";
+    catalog.initialize(
+        "prod",
+        ImmutableMap.of(
+            CatalogProperties.URI,
+            "ignored",
+            "credential",
+            "catalog:secret",
+            OAuth2Properties.SCOPE,
+            scope));
+
+    Thread.sleep(1_100);
+
+    // call client credentials with no initial auth
+    Mockito.verify(adapter)
+        .execute(
+            eq(HTTPMethod.POST),
+            eq("v1/oauth/tokens"),
+            any(),
+            any(),
+            eq(OAuthTokenResponse.class),
+            eq(emptyHeaders),
+            any());
+
+    // use the client credential token for config
+    Mockito.verify(adapter)
+        .execute(
+            eq(HTTPMethod.GET),
+            eq("v1/config"),
+            any(),
+            any(),
+            eq(ConfigResponse.class),
+            eq(catalogHeaders),
+            any());
+
+    // verify the token exchange uses the right scope
+    Map<String, String> firstRefreshRequest =
+        ImmutableMap.of(
+            "grant_type", "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token", "client-credentials-token:sub=catalog",
+            "subject_token_type", "urn:ietf:params:oauth:token-type:access_token",
+            "scope", scope);
+    Mockito.verify(adapter)
+        .execute(
+            eq(HTTPMethod.POST),
+            eq("v1/oauth/tokens"),
+            any(),
+            Mockito.argThat(firstRefreshRequest::equals),
+            eq(OAuthTokenResponse.class),
+            eq(catalogHeaders),
+            any());
+  }
+
+  private int localPort() {
+    assertThat(httpServer.isRunning()).isTrue();
+    return ((ServerConnector) httpServer.getConnectors()[0]).getLocalPort();
   }
 }
