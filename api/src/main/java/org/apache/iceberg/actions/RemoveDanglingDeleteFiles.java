@@ -20,6 +20,7 @@ package org.apache.iceberg.actions;
 
 import java.util.List;
 import org.apache.iceberg.DeleteFile;
+import org.apache.iceberg.expressions.Expression;
 
 /**
  * An action that removes dangling delete files from the current snapshot. A delete file is dangling
@@ -42,4 +43,7 @@ public interface RemoveDanglingDeleteFiles
     /** Removes representation of removed delete files. */
     List<DeleteFile> removedDeleteFiles();
   }
+
+  RemoveDanglingDeleteFiles filter(Expression expression);
+
 }

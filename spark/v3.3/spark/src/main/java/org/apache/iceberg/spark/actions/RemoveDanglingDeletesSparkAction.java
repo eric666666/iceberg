@@ -32,6 +32,8 @@ import org.apache.iceberg.Partitioning;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.actions.RemoveDanglingDeleteFiles;
 import org.apache.iceberg.actions.RemoveDanglingDeleteFilesActionResult;
+import org.apache.iceberg.expressions.Expression;
+import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.JobGroupInfo;
 import org.apache.iceberg.types.Types;
@@ -61,6 +63,7 @@ public class RemoveDanglingDeletesSparkAction
     implements RemoveDanglingDeleteFiles {
 
   private final Table table;
+  private Expression filter = Expressions.alwaysTrue();
 
   protected RemoveDanglingDeletesSparkAction(SparkSession spark, Table table) {
     super(spark);
@@ -88,7 +91,9 @@ public class RemoveDanglingDeletesSparkAction
     Dataset<Row> entries =
         loadMetadataTable(table, ENTRIES)
             .filter("status < 2") // live entries
-            .selectExpr(
+//                TODO 过滤分区
+//                 .filter()
+                        .selectExpr(
                 "data_file.partition as partition",
                 "data_file.spec_id as spec_id",
                 "data_file.file_path as file_path",
@@ -174,6 +179,12 @@ public class RemoveDanglingDeletesSparkAction
 
     removedDeleteFiles.addAll(eqDeletesToRemove.collectAsList());
     return removedDeleteFiles;
+  }
+
+  @Override
+  public RemoveDanglingDeleteFiles filter(Expression expression) {
+    filter = Expressions.and(filter, expression);
+    return this;
   }
 
   private static class MakeDeleteFile implements MapFunction<Row, DeleteFile> {
