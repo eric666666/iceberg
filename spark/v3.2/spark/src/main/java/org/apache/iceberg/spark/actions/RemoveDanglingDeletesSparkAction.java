@@ -64,6 +64,7 @@ public class RemoveDanglingDeletesSparkAction
 
   private final Table table;
   private Expression filter = Expressions.alwaysTrue();
+  private boolean dryRun;
 
   protected RemoveDanglingDeletesSparkAction(SparkSession spark, Table table) {
     super(spark);
@@ -104,9 +105,10 @@ public class RemoveDanglingDeletesSparkAction
 
     DeleteFiles deleteFiles = table.newDelete();
     List<DeleteFile> toRemove = withReusableDS(entries, this::danglingDeletes);
-    toRemove.forEach(deleteFiles::deleteFile);
-    deleteFiles.commit();
-
+    if (!dryRun){
+      toRemove.forEach(deleteFiles::deleteFile);
+      deleteFiles.commit();
+    }
     return new RemoveDanglingDeleteFilesActionResult(toRemove);
   }
 
@@ -179,6 +181,11 @@ public class RemoveDanglingDeletesSparkAction
 
     removedDeleteFiles.addAll(eqDeletesToRemove.collectAsList());
     return removedDeleteFiles;
+  }
+
+  @Override
+  public void dryRun(boolean dryRun) {
+    this.dryRun=dryRun;
   }
 
   @Override

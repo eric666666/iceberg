@@ -38,7 +38,9 @@ import org.apache.iceberg.expressions.Expression;
 public interface RemoveDanglingDeleteFiles
     extends Action<RemoveDanglingDeleteFiles, RemoveDanglingDeleteFiles.Result> {
 
-  /** The action result that contains a summary of the execution. */
+    void dryRun(boolean dryRun);
+
+    /** The action result that contains a summary of the execution. */
   interface Result {
     /** Removes representation of removed delete files. */
     List<DeleteFile> removedDeleteFiles();
