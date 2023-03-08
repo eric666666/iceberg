@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.spark.procedures;
 
+import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.actions.RemoveDanglingDeleteFiles;
 import org.apache.iceberg.spark.Spark3Util;
@@ -25,7 +26,6 @@ import org.apache.iceberg.spark.procedures.SparkProcedures.ProcedureBuilder;
 import org.apache.spark.sql.AnalysisException;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.Expression;
-import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.iceberg.catalog.ProcedureParameter;
@@ -34,6 +34,9 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.unsafe.types.UTF8String;
+
+import java.util.List;
 
 /**
  * A procedure that rewrites datafiles in a table.
@@ -41,81 +44,80 @@ import org.apache.spark.sql.types.StructType;
  * @see org.apache.iceberg.spark.actions.SparkActions#rewriteDataFiles(Table)
  */
 class RemoveDanglingDeleteFileProcedure extends BaseProcedure {
+    private boolean dryRun;
 
-  private static final ProcedureParameter[] PARAMETERS =
-      new ProcedureParameter[] {
-        ProcedureParameter.required("table", DataTypes.StringType),
-        ProcedureParameter.optional("where", DataTypes.StringType)
-      };
+    private static final ProcedureParameter[] PARAMETERS =
+            new ProcedureParameter[]{
+                    ProcedureParameter.required("table", DataTypes.StringType),
+                    ProcedureParameter.optional("where", DataTypes.StringType),
+                    ProcedureParameter.optional("dry_run", DataTypes.BooleanType)
+            };
 
-  // counts are not nullable since the action result is never null
-  private static final StructType OUTPUT_TYPE =
-      new StructType(
-          new StructField[] {
-            new StructField(
-                "rewritten_data_files_count", DataTypes.IntegerType, false, Metadata.empty()),
-            new StructField(
-                "added_data_files_count", DataTypes.IntegerType, false, Metadata.empty()),
-            new StructField("rewritten_bytes_count", DataTypes.LongType, false, Metadata.empty())
-          });
+    // counts are not nullable since the action result is never null
+    private static final StructType OUTPUT_TYPE =
+            new StructType(
+                    new StructField[]{
+                            new StructField("delete_file_location", DataTypes.StringType, false, Metadata.empty())
+                    });
 
-  public static ProcedureBuilder builder() {
-    return new Builder<RemoveDanglingDeleteFileProcedure>() {
-      @Override
-      protected RemoveDanglingDeleteFileProcedure doBuild() {
-        return new RemoveDanglingDeleteFileProcedure(tableCatalog());
-      }
-    };
-  }
-
-  private RemoveDanglingDeleteFileProcedure(TableCatalog tableCatalog) {
-    super(tableCatalog);
-  }
-
-  @Override
-  public ProcedureParameter[] parameters() {
-    return PARAMETERS;
-  }
-
-  @Override
-  public StructType outputType() {
-    return OUTPUT_TYPE;
-  }
-
-  @Override
-  public InternalRow[] call(InternalRow args) {
-    Identifier tableIdent = toIdentifier(args.getString(0), PARAMETERS[0].name());
-
-    return modifyIcebergTable(
-        tableIdent,
-        table -> {
-          String quotedFullIdentifier =
-              Spark3Util.quotedFullIdentifier(tableCatalog().name(), tableIdent);
-            RemoveDanglingDeleteFiles action = actions().removeDanglingDeleteFiles(table);
-
-          String where = args.isNullAt(1) ? null : args.getString(1);
-
-          action = checkAndApplyFilter(action, where, quotedFullIdentifier);
-
-          RemoveDanglingDeleteFiles.Result result = action.execute();
-
-          return toOutputRows(result);
-        });
-  }
-
-  private RemoveDanglingDeleteFiles checkAndApplyFilter(
-          RemoveDanglingDeleteFiles action, String where, String tableName) {
-    if (where != null) {
-      try {
-        Expression expression =
-            SparkExpressionConverter.collectResolvedSparkExpression(spark(), tableName, where);
-        return action.filter(SparkExpressionConverter.convertToIcebergExpression(expression));
-      } catch (AnalysisException e) {
-        throw new IllegalArgumentException("Cannot parse predicates in where option: " + where);
-      }
+    public static ProcedureBuilder builder() {
+        return new Builder<RemoveDanglingDeleteFileProcedure>() {
+            @Override
+            protected RemoveDanglingDeleteFileProcedure doBuild() {
+                return new RemoveDanglingDeleteFileProcedure(tableCatalog());
+            }
+        };
     }
-    return action;
-  }
+
+    private RemoveDanglingDeleteFileProcedure(TableCatalog tableCatalog) {
+        super(tableCatalog);
+    }
+
+    @Override
+    public ProcedureParameter[] parameters() {
+        return PARAMETERS;
+    }
+
+    @Override
+    public StructType outputType() {
+        return OUTPUT_TYPE;
+    }
+
+    @Override
+    public InternalRow[] call(InternalRow args) {
+        Identifier tableIdent = toIdentifier(args.getString(0), PARAMETERS[0].name());
+
+        return modifyIcebergTable(
+                tableIdent,
+                table -> {
+                    String quotedFullIdentifier =
+                            Spark3Util.quotedFullIdentifier(tableCatalog().name(), tableIdent);
+                    RemoveDanglingDeleteFiles action = actions().removeDanglingDeleteFiles(table);
+
+                    String where = args.isNullAt(1) ? null : args.getString(1);
+                    dryRun = args.isNullAt(2) ? false : args.getBoolean(2);
+
+                    action = checkAndApplyFilter(action, where, quotedFullIdentifier);
+                    action.dryRun(dryRun);
+                    RemoveDanglingDeleteFiles.Result result = action.execute();
+
+                    return toOutputRows(result);
+                });
+    }
+
+    private RemoveDanglingDeleteFiles checkAndApplyFilter(
+            RemoveDanglingDeleteFiles action, String where, String tableName) {
+        if (where != null) {
+            try {
+                Expression expression =
+                        SparkExpressionConverter.collectResolvedSparkExpression(spark(), tableName, where);
+                return action.filter(SparkExpressionConverter.convertToIcebergExpression(expression));
+            } catch (AnalysisException e) {
+                throw new IllegalArgumentException("Cannot parse predicates in where option: " + where);
+            }
+        }
+        return action;
+    }
 
 //  private RewriteDataFiles checkAndApplyOptions(InternalRow args, RewriteDataFiles action) {
 //    Map<String, String> options = Maps.newHashMap();
@@ -189,14 +191,19 @@ class RemoveDanglingDeleteFileProcedure extends BaseProcedure {
 //    return builder.build();
 //  }
 
-  private InternalRow[] toOutputRows(RemoveDanglingDeleteFiles.Result result) {
-   return result.removedDeleteFiles().stream()
-            .map(deleteFile -> new GenericInternalRow(new Object[]{deleteFile}))
-           .toArray(InternalRow[]::new);
-  }
+    private InternalRow[] toOutputRows(RemoveDanglingDeleteFiles.Result result) {
+        List<DeleteFile> deleteFiles = result.removedDeleteFiles();
+        InternalRow[] rows = new InternalRow[deleteFiles.size()];
+        int index = 0;
+        for (DeleteFile deleteFile : deleteFiles) {
+            rows[index] = newInternalRow(UTF8String.fromString(deleteFile.path().toString()));
+            index++;
+        }
+        return rows;
+    }
 
-  @Override
-  public String description() {
-    return "RemoveDanglingDeleteFileProcedure";
-  }
+    @Override
+    public String description() {
+        return "RemoveDanglingDeleteFileProcedure";
+    }
 }
