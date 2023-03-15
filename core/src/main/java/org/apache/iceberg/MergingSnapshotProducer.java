@@ -525,12 +525,13 @@ abstract class MergingSnapshotProducer<ThisT> extends SnapshotProducer<ThisT> {
       // fail
       DeleteFile[] deleteFiles = deletes.forDataFile(startingSequenceNumber, dataFile);
 
-      if (parent.sequenceNumber() == startingSequenceNumber) {
-        // 序列号一直，rewrite file default option
-          if (deleteFiles.length != 0) {
-              LOG.warn("Skip delete files check on commit rewrite files. Delete files: {}", Arrays.toString(deleteFiles));
-          }
-        LOG.warn("Skip delete files check on commit rewrite files. parent.sequenceNumber()[{}] == startingSequenceNumber[{}]",parent.sequenceNumber(),startingSequenceNumber );
+      LOG.warn("Check delete files for commit snapshot.parent[{}], parent.sequenceNumber()[{}] ,base.snapshot(startingSnapshotId).sequenceNumber()[{}] ,startingSequenceNumber[{}]", parent, parent.sequenceNumber(), base.snapshot(startingSnapshotId).sequenceNumber(), startingSequenceNumber);
+      if (base.snapshot(startingSnapshotId).sequenceNumber() == startingSequenceNumber) {
+        // 序列号一致，rewrite file default option
+        if (deleteFiles.length != 0) {
+          LOG.warn("Skip delete files check on commit rewrite files. Delete files: {}", Arrays.toString(deleteFiles));
+        }
+        LOG.warn("Skip delete files check on commit rewrite files. parent.sequenceNumber()[{}] == startingSequenceNumber[{}]", parent.sequenceNumber(), startingSequenceNumber);
         return;
       }
 
