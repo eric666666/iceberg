@@ -530,7 +530,8 @@ abstract class MergingSnapshotProducer<ThisT> extends SnapshotProducer<ThisT> {
           if (deleteFiles.length != 0) {
               LOG.warn("Skip delete files check on commit rewrite files. Delete files: {}", Arrays.toString(deleteFiles));
           }
-          return;
+        LOG.warn("Skip delete files check on commit rewrite files. parent.sequenceNumber()[{}] == startingSequenceNumber[{}]",parent.sequenceNumber(),startingSequenceNumber );
+        return;
       }
 
       if (ignoreEqualityDeletes) {
