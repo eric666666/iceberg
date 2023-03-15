@@ -527,23 +527,25 @@ abstract class MergingSnapshotProducer<ThisT> extends SnapshotProducer<ThisT> {
 
       if (parent.sequenceNumber() == startingSnapshotId) {
         // 序列号一直，rewrite file default option
-          if (deleteFiles.length != 0) {
-              LOG.warn("Skip delete files check on commit rewrite files. Delete files: {}", Arrays.toString(deleteFiles));
-          }
-          return;
+        if (deleteFiles.length != 0) {
+          LOG.warn(
+              "Skip delete files check on commit rewrite files. Delete files: {}",
+              Arrays.toString(deleteFiles));
+        }
+        return;
       }
 
       if (ignoreEqualityDeletes) {
-          ValidationException.check(
-                  Arrays.stream(deleteFiles)
-                          .noneMatch(deleteFile -> deleteFile.content() == FileContent.POSITION_DELETES),
-                  "Cannot commit, found new position delete for replaced data file: %s",
-                  dataFile);
+        ValidationException.check(
+            Arrays.stream(deleteFiles)
+                .noneMatch(deleteFile -> deleteFile.content() == FileContent.POSITION_DELETES),
+            "Cannot commit, found new position delete for replaced data file: %s",
+            dataFile);
       } else {
-          ValidationException.check(
-                  deleteFiles.length == 0,
-                  "Cannot commit, found new delete for replaced data file: %s",
-                  dataFile);
+        ValidationException.check(
+            deleteFiles.length == 0,
+            "Cannot commit, found new delete for replaced data file: %s",
+            dataFile);
       }
     }
   }

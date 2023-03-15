@@ -91,7 +91,7 @@ class RemoveDanglingDeleteFileProcedure extends BaseProcedure {
         table -> {
           String quotedFullIdentifier =
               Spark3Util.quotedFullIdentifier(tableCatalog().name(), tableIdent);
-            RemoveDanglingDeleteFiles action = actions().removeDanglingDeleteFiles(table);
+          RemoveDanglingDeleteFiles action = actions().removeDanglingDeleteFiles(table);
 
           String where = args.isNullAt(1) ? null : args.getString(1);
 
@@ -104,7 +104,7 @@ class RemoveDanglingDeleteFileProcedure extends BaseProcedure {
   }
 
   private RemoveDanglingDeleteFiles checkAndApplyFilter(
-          RemoveDanglingDeleteFiles action, String where, String tableName) {
+      RemoveDanglingDeleteFiles action, String where, String tableName) {
     if (where != null) {
       try {
         Expression expression =
@@ -117,82 +117,86 @@ class RemoveDanglingDeleteFileProcedure extends BaseProcedure {
     return action;
   }
 
-//  private RewriteDataFiles checkAndApplyOptions(InternalRow args, RewriteDataFiles action) {
-//    Map<String, String> options = Maps.newHashMap();
-//    args.getMap(3)
-//        .foreach(
-//            DataTypes.StringType,
-//            DataTypes.StringType,
-//            (k, v) -> {
-//              options.put(k.toString(), v.toString());
-//              return BoxedUnit.UNIT;
-//            });
-//    return action.options(options);
-//  }
+  //  private RewriteDataFiles checkAndApplyOptions(InternalRow args, RewriteDataFiles action) {
+  //    Map<String, String> options = Maps.newHashMap();
+  //    args.getMap(3)
+  //        .foreach(
+  //            DataTypes.StringType,
+  //            DataTypes.StringType,
+  //            (k, v) -> {
+  //              options.put(k.toString(), v.toString());
+  //              return BoxedUnit.UNIT;
+  //            });
+  //    return action.options(options);
+  //  }
 
-//  private RewriteDataFiles checkAndApplyStrategy(
-//      RewriteDataFiles action, String strategy, String sortOrderString, Schema schema) {
-//    List<Zorder> zOrderTerms = Lists.newArrayList();
-//    List<ExtendedParser.RawOrderField> sortOrderFields = Lists.newArrayList();
-//    if (sortOrderString != null) {
-//      ExtendedParser.parseSortOrder(spark(), sortOrderString)
-//          .forEach(
-//              field -> {
-//                if (field.term() instanceof Zorder) {
-//                  zOrderTerms.add((Zorder) field.term());
-//                } else {
-//                  sortOrderFields.add(field);
-//                }
-//              });
-//
-//      if (!zOrderTerms.isEmpty() && !sortOrderFields.isEmpty()) {
-//        // TODO: we need to allow this in future when SparkAction has handling for this.
-//        throw new IllegalArgumentException(
-//            "Cannot mix identity sort columns and a Zorder sort expression: " + sortOrderString);
-//      }
-//    }
-//
-//    // caller of this function ensures that between strategy and sortOrder, at least one of them is
-//    // not null.
-//    if (strategy == null || strategy.equalsIgnoreCase("sort")) {
-//      if (!zOrderTerms.isEmpty()) {
-//        String[] columnNames =
-//            zOrderTerms.stream()
-//                .flatMap(zOrder -> zOrder.refs().stream().map(NamedReference::name))
-//                .toArray(String[]::new);
-//        return action.zOrder(columnNames);
-//      } else if (!sortOrderFields.isEmpty()) {
-//        return action.sort(buildSortOrder(sortOrderFields, schema));
-//      } else {
-//        return action.sort();
-//      }
-//    }
-//    if (strategy.equalsIgnoreCase("binpack")) {
-//      RewriteDataFiles rewriteDataFiles = action.binPack();
-//      if (sortOrderString != null) {
-//        // calling below method to throw the error as user has set both binpack strategy and sort
-//        // order
-//        return rewriteDataFiles.sort(buildSortOrder(sortOrderFields, schema));
-//      }
-//      return rewriteDataFiles;
-//    } else {
-//      throw new IllegalArgumentException(
-//          "unsupported strategy: " + strategy + ". Only binpack or sort is supported");
-//    }
-//  }
-//
-//  private SortOrder buildSortOrder(
-//      List<ExtendedParser.RawOrderField> rawOrderFields, Schema schema) {
-//    SortOrder.Builder builder = SortOrder.builderFor(schema);
-//    rawOrderFields.forEach(
-//        rawField -> builder.sortBy(rawField.term(), rawField.direction(), rawField.nullOrder()));
-//    return builder.build();
-//  }
+  //  private RewriteDataFiles checkAndApplyStrategy(
+  //      RewriteDataFiles action, String strategy, String sortOrderString, Schema schema) {
+  //    List<Zorder> zOrderTerms = Lists.newArrayList();
+  //    List<ExtendedParser.RawOrderField> sortOrderFields = Lists.newArrayList();
+  //    if (sortOrderString != null) {
+  //      ExtendedParser.parseSortOrder(spark(), sortOrderString)
+  //          .forEach(
+  //              field -> {
+  //                if (field.term() instanceof Zorder) {
+  //                  zOrderTerms.add((Zorder) field.term());
+  //                } else {
+  //                  sortOrderFields.add(field);
+  //                }
+  //              });
+  //
+  //      if (!zOrderTerms.isEmpty() && !sortOrderFields.isEmpty()) {
+  //        // TODO: we need to allow this in future when SparkAction has handling for this.
+  //        throw new IllegalArgumentException(
+  //            "Cannot mix identity sort columns and a Zorder sort expression: " +
+  // sortOrderString);
+  //      }
+  //    }
+  //
+  //    // caller of this function ensures that between strategy and sortOrder, at least one of them
+  // is
+  //    // not null.
+  //    if (strategy == null || strategy.equalsIgnoreCase("sort")) {
+  //      if (!zOrderTerms.isEmpty()) {
+  //        String[] columnNames =
+  //            zOrderTerms.stream()
+  //                .flatMap(zOrder -> zOrder.refs().stream().map(NamedReference::name))
+  //                .toArray(String[]::new);
+  //        return action.zOrder(columnNames);
+  //      } else if (!sortOrderFields.isEmpty()) {
+  //        return action.sort(buildSortOrder(sortOrderFields, schema));
+  //      } else {
+  //        return action.sort();
+  //      }
+  //    }
+  //    if (strategy.equalsIgnoreCase("binpack")) {
+  //      RewriteDataFiles rewriteDataFiles = action.binPack();
+  //      if (sortOrderString != null) {
+  //        // calling below method to throw the error as user has set both binpack strategy and
+  // sort
+  //        // order
+  //        return rewriteDataFiles.sort(buildSortOrder(sortOrderFields, schema));
+  //      }
+  //      return rewriteDataFiles;
+  //    } else {
+  //      throw new IllegalArgumentException(
+  //          "unsupported strategy: " + strategy + ". Only binpack or sort is supported");
+  //    }
+  //  }
+  //
+  //  private SortOrder buildSortOrder(
+  //      List<ExtendedParser.RawOrderField> rawOrderFields, Schema schema) {
+  //    SortOrder.Builder builder = SortOrder.builderFor(schema);
+  //    rawOrderFields.forEach(
+  //        rawField -> builder.sortBy(rawField.term(), rawField.direction(),
+  // rawField.nullOrder()));
+  //    return builder.build();
+  //  }
 
   private InternalRow[] toOutputRows(RemoveDanglingDeleteFiles.Result result) {
-   return result.removedDeleteFiles().stream()
-            .map(deleteFile -> new GenericInternalRow(new Object[]{deleteFile}))
-           .toArray(InternalRow[]::new);
+    return result.removedDeleteFiles().stream()
+        .map(deleteFile -> new GenericInternalRow(new Object[] {deleteFile}))
+        .toArray(InternalRow[]::new);
   }
 
   @Override

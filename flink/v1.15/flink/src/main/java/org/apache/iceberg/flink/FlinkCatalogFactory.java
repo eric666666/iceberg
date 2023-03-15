@@ -18,6 +18,15 @@
  */
 package org.apache.iceberg.flink;
 
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.flink.configuration.GlobalConfiguration;
@@ -36,16 +45,6 @@ import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.util.PropertyUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.net.URL;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 
 /**
  * A Flink Catalog factory implementation that creates {@link FlinkCatalog}.
@@ -88,41 +87,42 @@ public class FlinkCatalogFactory implements CatalogFactory {
    * Create an Iceberg {@link org.apache.iceberg.catalog.Catalog} loader to be used by this Flink
    * catalog adapter.
    *
-   * @param name       Flink's catalog name
+   * @param name Flink's catalog name
    * @param properties Flink's catalog properties
    * @param hadoopConf Hadoop configuration for catalog
    * @return an Iceberg catalog loader
    */
   static CatalogLoader createCatalogLoader(
-          String name, Map<String, String> properties, Configuration hadoopConf) throws IOException {
+      String name, Map<String, String> properties, Configuration hadoopConf) throws IOException {
     String catalogImpl = properties.get(CatalogProperties.CATALOG_IMPL);
     if (catalogImpl != null) {
       String catalogType = properties.get(ICEBERG_CATALOG_TYPE);
       Preconditions.checkArgument(
-              catalogType == null,
-              "Cannot create catalog %s, both catalog-type and catalog-impl are set: catalog-type=%s, catalog-impl=%s",
-              name,
-              catalogType,
-              catalogImpl);
+          catalogType == null,
+          "Cannot create catalog %s, both catalog-type and catalog-impl are set: catalog-type=%s, catalog-impl=%s",
+          name,
+          catalogType,
+          catalogImpl);
       return CatalogLoader.custom(name, properties, hadoopConf, catalogImpl);
     }
 
     String catalogType = properties.getOrDefault(ICEBERG_CATALOG_TYPE, ICEBERG_CATALOG_TYPE_HIVE);
     switch (catalogType.toLowerCase(Locale.ENGLISH)) {
       case ICEBERG_CATALOG_TYPE_HIVE:
-
         String hiveConfDir = properties.get(HIVE_CONF_DIR);
 
         // zengbao 05-06
         String keytabFileName = properties.get(DIST_KEYTAB);
         if (StringUtils.isNotBlank(keytabFileName) && StringUtils.isNotBlank(hiveConfDir)) {
-          //下载keytab文件
-          String tempDir = FileUtils.getTempDirectory().getAbsolutePath() + File.separator + "stp-system-conf";
+          // 下载keytab文件
+          String tempDir =
+              FileUtils.getTempDirectory().getAbsolutePath() + File.separator + "stp-system-conf";
 
           Path f = new Path(keytabFileName);
           FileSystem fs = f.getFileSystem(new Configuration());
           if (!fs.exists(f)) {
-            throw new FileNotFoundException("Keytab file " + f.getName() + "is not found in " + keytabFileName);
+            throw new FileNotFoundException(
+                "Keytab file " + f.getName() + "is not found in " + keytabFileName);
           }
           fs.copyToLocalFile(f, new Path(tempDir, f.getName()));
         }
@@ -139,7 +139,7 @@ public class FlinkCatalogFactory implements CatalogFactory {
 
       default:
         throw new UnsupportedOperationException(
-                "Unknown catalog-type: " + catalogType + " (Must be 'hive' or 'hadoop')");
+            "Unknown catalog-type: " + catalogType + " (Must be 'hive' or 'hadoop')");
     }
   }
 
@@ -167,7 +167,7 @@ public class FlinkCatalogFactory implements CatalogFactory {
   }
 
   protected Catalog createCatalog(
-          String name, Map<String, String> properties, Configuration hadoopConf) throws IOException {
+      String name, Map<String, String> properties, Configuration hadoopConf) throws IOException {
     CatalogLoader catalogLoader = createCatalogLoader(name, properties, hadoopConf);
     String defaultDatabase = properties.getOrDefault(DEFAULT_DATABASE, DEFAULT_DATABASE_NAME);
 
@@ -177,36 +177,36 @@ public class FlinkCatalogFactory implements CatalogFactory {
     }
 
     boolean cacheEnabled =
-            PropertyUtil.propertyAsBoolean(
-                    properties, CatalogProperties.CACHE_ENABLED, CatalogProperties.CACHE_ENABLED_DEFAULT);
+        PropertyUtil.propertyAsBoolean(
+            properties, CatalogProperties.CACHE_ENABLED, CatalogProperties.CACHE_ENABLED_DEFAULT);
 
     long cacheExpirationIntervalMs =
-            PropertyUtil.propertyAsLong(
-                    properties,
-                    CatalogProperties.CACHE_EXPIRATION_INTERVAL_MS,
-                    CatalogProperties.CACHE_EXPIRATION_INTERVAL_MS_OFF);
+        PropertyUtil.propertyAsLong(
+            properties,
+            CatalogProperties.CACHE_EXPIRATION_INTERVAL_MS,
+            CatalogProperties.CACHE_EXPIRATION_INTERVAL_MS_OFF);
     Preconditions.checkArgument(
-            cacheExpirationIntervalMs != 0,
-            "%s is not allowed to be 0.",
-            CatalogProperties.CACHE_EXPIRATION_INTERVAL_MS);
+        cacheExpirationIntervalMs != 0,
+        "%s is not allowed to be 0.",
+        CatalogProperties.CACHE_EXPIRATION_INTERVAL_MS);
 
     return new FlinkCatalog(
-            name,
-            defaultDatabase,
-            baseNamespace,
-            catalogLoader,
-            cacheEnabled,
-            cacheExpirationIntervalMs);
+        name,
+        defaultDatabase,
+        baseNamespace,
+        catalogLoader,
+        cacheEnabled,
+        cacheExpirationIntervalMs);
   }
 
   private static Configuration mergeHiveConf(
-          Configuration hadoopConf, String hiveConfDir, String hadoopConfDir) throws IOException {
+      Configuration hadoopConf, String hiveConfDir, String hadoopConfDir) throws IOException {
     Configuration newConf = new Configuration(hadoopConf);
-
 
     // 22-05-06 增加hive-site.xml hdfs路径的支持
     if (StringUtils.isNotBlank(hiveConfDir) && hiveConfDir.startsWith("hdfs:")) {
-      String tempDir = FileUtils.getTempDirectory().getAbsolutePath() + File.separator + "stp-system-conf";
+      String tempDir =
+          FileUtils.getTempDirectory().getAbsolutePath() + File.separator + "stp-system-conf";
       String hiveSitePathStr = hiveConfDir + "/hive-site.xml";
       Path hiveSiteHdfsPath = new Path(hiveSitePathStr);
       FileSystem fs = hiveSiteHdfsPath.getFileSystem(newConf);
@@ -222,12 +222,11 @@ public class FlinkCatalogFactory implements CatalogFactory {
       return newConf;
     }
 
-
     if (!Strings.isNullOrEmpty(hiveConfDir)) {
       Preconditions.checkState(
-              Files.exists(Paths.get(hiveConfDir, "hive-site.xml")),
-              "There should be a hive-site.xml file under the directory %s",
-              hiveConfDir);
+          Files.exists(Paths.get(hiveConfDir, "hive-site.xml")),
+          "There should be a hive-site.xml file under the directory %s",
+          hiveConfDir);
       newConf.addResource(new Path(hiveConfDir, "hive-site.xml"));
     } else {
       // If don't provide the hive-site.xml path explicitly, it will try to load resource from
@@ -241,14 +240,14 @@ public class FlinkCatalogFactory implements CatalogFactory {
 
     if (!Strings.isNullOrEmpty(hadoopConfDir)) {
       Preconditions.checkState(
-              Files.exists(Paths.get(hadoopConfDir, "hdfs-site.xml")),
-              "Failed to load Hadoop configuration: missing %s",
-              Paths.get(hadoopConfDir, "hdfs-site.xml"));
+          Files.exists(Paths.get(hadoopConfDir, "hdfs-site.xml")),
+          "Failed to load Hadoop configuration: missing %s",
+          Paths.get(hadoopConfDir, "hdfs-site.xml"));
       newConf.addResource(new Path(hadoopConfDir, "hdfs-site.xml"));
       Preconditions.checkState(
-              Files.exists(Paths.get(hadoopConfDir, "core-site.xml")),
-              "Failed to load Hadoop configuration: missing %s",
-              Paths.get(hadoopConfDir, "core-site.xml"));
+          Files.exists(Paths.get(hadoopConfDir, "core-site.xml")),
+          "Failed to load Hadoop configuration: missing %s",
+          Paths.get(hadoopConfDir, "core-site.xml"));
       newConf.addResource(new Path(hadoopConfDir, "core-site.xml"));
     }
 

@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.flink;
 
+import java.io.IOException;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.AssertHelpers;
@@ -43,7 +44,7 @@ public class TestFlinkCatalogFactory {
   }
 
   @Test
-  public void testCreateCreateCatalogHive() {
+  public void testCreateCreateCatalogHive() throws IOException {
     String catalogName = "hiveCatalog";
     props.put(
         FlinkCatalogFactory.ICEBERG_CATALOG_TYPE, FlinkCatalogFactory.ICEBERG_CATALOG_TYPE_HIVE);
@@ -56,7 +57,7 @@ public class TestFlinkCatalogFactory {
   }
 
   @Test
-  public void testCreateCreateCatalogHadoop() {
+  public void testCreateCreateCatalogHadoop() throws IOException {
     String catalogName = "hadoopCatalog";
     props.put(
         FlinkCatalogFactory.ICEBERG_CATALOG_TYPE, FlinkCatalogFactory.ICEBERG_CATALOG_TYPE_HADOOP);
@@ -69,7 +70,7 @@ public class TestFlinkCatalogFactory {
   }
 
   @Test
-  public void testCreateCreateCatalogCustom() {
+  public void testCreateCreateCatalogCustom() throws IOException {
     String catalogName = "customCatalog";
     props.put(CatalogProperties.CATALOG_IMPL, CustomHadoopCatalog.class.getName());
 

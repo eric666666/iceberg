@@ -92,9 +92,9 @@ public class RemoveDanglingDeletesSparkAction
     Dataset<Row> entries =
         loadMetadataTable(table, ENTRIES)
             .filter("status < 2") // live entries
-//                TODO 过滤分区
-//                 .filter()
-                        .selectExpr(
+            //                TODO 过滤分区
+            //                 .filter()
+            .selectExpr(
                 "data_file.partition as partition",
                 "data_file.spec_id as spec_id",
                 "data_file.file_path as file_path",
@@ -105,7 +105,7 @@ public class RemoveDanglingDeletesSparkAction
 
     DeleteFiles deleteFiles = table.newDelete();
     List<DeleteFile> toRemove = withReusableDS(entries, this::danglingDeletes);
-    if (!dryRun){
+    if (!dryRun) {
       toRemove.forEach(deleteFiles::deleteFile);
       deleteFiles.commit();
     }
@@ -185,7 +185,7 @@ public class RemoveDanglingDeletesSparkAction
 
   @Override
   public void dryRun(boolean dryRun) {
-    this.dryRun=dryRun;
+    this.dryRun = dryRun;
   }
 
   @Override

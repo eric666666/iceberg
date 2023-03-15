@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.flink;
 
+import java.io.IOException;
 import java.util.Map;
 import java.util.Set;
 import org.apache.flink.configuration.ConfigOption;
@@ -92,12 +93,16 @@ public class FlinkDynamicTableFactory
     if (catalog != null) {
       tableLoader = createTableLoader(catalog, objectIdentifier.toObjectPath());
     } else {
-      tableLoader =
-          createTableLoader(
-              catalogTable,
-              tableProps,
-              objectIdentifier.getDatabaseName(),
-              objectIdentifier.getObjectName());
+      try {
+        tableLoader =
+            createTableLoader(
+                catalogTable,
+                tableProps,
+                objectIdentifier.getDatabaseName(),
+                objectIdentifier.getObjectName());
+      } catch (IOException e) {
+        throw new RuntimeException(e);
+      }
     }
 
     return new IcebergTableSource(tableLoader, tableSchema, tableProps, context.getConfiguration());
@@ -114,9 +119,13 @@ public class FlinkDynamicTableFactory
     if (catalog != null) {
       tableLoader = createTableLoader(catalog, objectPath);
     } else {
-      tableLoader =
-          createTableLoader(
-              catalogTable, writeProps, objectPath.getDatabaseName(), objectPath.getObjectName());
+      try {
+        tableLoader =
+            createTableLoader(
+                catalogTable, writeProps, objectPath.getDatabaseName(), objectPath.getObjectName());
+      } catch (IOException e) {
+        throw new RuntimeException(e);
+      }
     }
 
     return new IcebergTableSink(tableLoader, tableSchema, context.getConfiguration(), writeProps);
@@ -147,7 +156,8 @@ public class FlinkDynamicTableFactory
       CatalogBaseTable catalogBaseTable,
       Map<String, String> tableProps,
       String databaseName,
-      String tableName) {
+      String tableName)
+      throws IOException {
     Configuration flinkConf = new Configuration();
     tableProps.forEach(flinkConf::setString);
 
