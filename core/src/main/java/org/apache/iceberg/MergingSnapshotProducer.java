@@ -525,7 +525,7 @@ abstract class MergingSnapshotProducer<ThisT> extends SnapshotProducer<ThisT> {
       // fail
       DeleteFile[] deleteFiles = deletes.forDataFile(startingSequenceNumber, dataFile);
 
-      if (parent.sequenceNumber() == startingSnapshotId) {
+      if (parent.sequenceNumber() == startingSequenceNumber) {
         // 序列号一直，rewrite file default option
           if (deleteFiles.length != 0) {
               LOG.warn("Skip delete files check on commit rewrite files. Delete files: {}", Arrays.toString(deleteFiles));
