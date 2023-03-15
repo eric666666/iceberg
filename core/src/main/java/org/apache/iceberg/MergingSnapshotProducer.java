@@ -525,27 +525,27 @@ abstract class MergingSnapshotProducer<ThisT> extends SnapshotProducer<ThisT> {
       // fail
       DeleteFile[] deleteFiles = deletes.forDataFile(startingSequenceNumber, dataFile);
 
-      if (parent.sequenceNumber() == startingSnapshotId) {
-        // 序列号一直，rewrite file default option
+      LOG.warn("Check delete files for commit snapshot.parent[{}], parent.sequenceNumber()[{}] ,base.snapshot(startingSnapshotId).sequenceNumber()[{}] ,startingSequenceNumber[{}]", parent, parent.sequenceNumber(), base.snapshot(startingSnapshotId).sequenceNumber(), startingSequenceNumber);
+      if (base.snapshot(startingSnapshotId).sequenceNumber() == startingSequenceNumber) {
+        // 序列号一致，rewrite file default option
         if (deleteFiles.length != 0) {
-          LOG.warn(
-              "Skip delete files check on commit rewrite files. Delete files: {}",
-              Arrays.toString(deleteFiles));
+          LOG.warn("Skip delete files check on commit rewrite files. Delete files: {}", Arrays.toString(deleteFiles));
         }
+        LOG.warn("Skip delete files check on commit rewrite files. parent.sequenceNumber()[{}] == startingSequenceNumber[{}]", parent.sequenceNumber(), startingSequenceNumber);
         return;
       }
 
       if (ignoreEqualityDeletes) {
-        ValidationException.check(
-            Arrays.stream(deleteFiles)
-                .noneMatch(deleteFile -> deleteFile.content() == FileContent.POSITION_DELETES),
-            "Cannot commit, found new position delete for replaced data file: %s",
-            dataFile);
+          ValidationException.check(
+                  Arrays.stream(deleteFiles)
+                          .noneMatch(deleteFile -> deleteFile.content() == FileContent.POSITION_DELETES),
+                  "Cannot commit, found new position delete for replaced data file: %s",
+                  dataFile);
       } else {
-        ValidationException.check(
-            deleteFiles.length == 0,
-            "Cannot commit, found new delete for replaced data file: %s",
-            dataFile);
+          ValidationException.check(
+                  deleteFiles.length == 0,
+                  "Cannot commit, found new delete for replaced data file: %s",
+                  dataFile);
       }
     }
   }
