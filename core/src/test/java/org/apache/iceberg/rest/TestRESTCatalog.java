@@ -38,7 +38,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.iceberg.AssertHelpers;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.DataFiles;
 import org.apache.iceberg.FileScanTask;
@@ -166,7 +165,7 @@ public class TestRESTCatalog extends CatalogTests<RESTCatalog> {
     this.restCatalog =
         new RESTCatalog(
             context,
-            (config) -> HTTPClient.builder().uri(config.get(CatalogProperties.URI)).build());
+            (config) -> HTTPClient.builder(config).uri(config.get(CatalogProperties.URI)).build());
     restCatalog.setConf(conf);
     restCatalog.initialize(
         "prod",
@@ -289,17 +288,14 @@ public class TestRESTCatalog extends CatalogTests<RESTCatalog> {
   @Test
   public void testInitializeWithBadArguments() throws IOException {
     RESTCatalog restCat = new RESTCatalog();
-    AssertHelpers.assertThrows(
-        "Configuration passed to initialize cannot be null",
-        IllegalArgumentException.class,
-        "Invalid configuration: null",
-        () -> restCat.initialize("prod", null));
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> restCat.initialize("prod", null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Invalid configuration: null");
 
-    AssertHelpers.assertThrows(
-        "Configuration passed to initialize must have uri",
-        NullPointerException.class,
-        "Invalid uri for http client: null",
-        () -> restCat.initialize("prod", ImmutableMap.of()));
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> restCat.initialize("prod", ImmutableMap.of()))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessage("Invalid uri for http client: null");
 
     restCat.close();
   }
@@ -765,7 +761,7 @@ public class TestRESTCatalog extends CatalogTests<RESTCatalog> {
             CatalogProperties.URI,
             "ignored",
             CatalogProperties.FILE_IO_IMPL,
-            "org.apache.iceberg.io.InMemoryFileIO",
+            "org.apache.iceberg.inmemory.InMemoryFileIO",
             // default loading to refs only
             "snapshot-loading-mode",
             "refs"));
@@ -1218,7 +1214,7 @@ public class TestRESTCatalog extends CatalogTests<RESTCatalog> {
                 "user",
                 ImmutableMap.of("credential", "user:12345"),
                 ImmutableMap.of()),
-            (config) -> HTTPClient.builder().uri(config.get(CatalogProperties.URI)).build());
+            (config) -> HTTPClient.builder(config).uri(config.get(CatalogProperties.URI)).build());
     restCatalog.setConf(new Configuration());
     restCatalog.initialize(
         "prod",

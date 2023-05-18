@@ -65,6 +65,12 @@ public interface ActionsProvider {
         this.getClass().getName() + " does not implement deleteReachableFiles");
   }
 
+  /** Instantiates an action to rewrite position delete files */
+  default RewritePositionDeleteFiles rewritePositionDeletes(Table table) {
+    throw new UnsupportedOperationException(
+        this.getClass().getName() + " does not implement rewritePositionDeletes");
+  }
+
   /** Instantiates an action to remove dangling delete files from current snapshot. */
   default RemoveDanglingDeleteFiles removeDanglingDeleteFiles(Table table) {
     throw new UnsupportedOperationException(

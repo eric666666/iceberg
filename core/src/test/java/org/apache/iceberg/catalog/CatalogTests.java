@@ -28,7 +28,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.apache.iceberg.AppendFiles;
-import org.apache.iceberg.AssertHelpers;
 import org.apache.iceberg.BaseTable;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DataFiles;
@@ -65,6 +64,7 @@ import org.apache.iceberg.util.CharSequenceSet;
 import org.assertj.core.api.Assertions;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
@@ -185,11 +185,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
     catalog.createNamespace(NS);
     Assert.assertTrue("Namespace should exist", catalog.namespaceExists(NS));
 
-    AssertHelpers.assertThrows(
-        "Should fail to create an existing database",
-        AlreadyExistsException.class,
-        "newdb",
-        () -> catalog.createNamespace(NS));
+    Assertions.assertThatThrownBy(() -> catalog.createNamespace(NS))
+        .isInstanceOf(AlreadyExistsException.class)
+        .hasMessageContaining("Namespace already exists");
+
     Assert.assertTrue("Namespace should still exist", catalog.namespaceExists(NS));
   }
 
@@ -218,11 +217,9 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
 
     Assert.assertFalse("Namespace should not exist", catalog.namespaceExists(NS));
 
-    AssertHelpers.assertThrows(
-        "Should fail to load nonexistent namespace metadata",
-        NoSuchNamespaceException.class,
-        "newdb",
-        () -> catalog.loadNamespaceMetadata(NS));
+    Assertions.assertThatThrownBy(() -> catalog.loadNamespaceMetadata(NS))
+        .isInstanceOf(NoSuchNamespaceException.class)
+        .hasMessage("Namespace does not exist: newdb");
 
     catalog.createNamespace(NS);
     Assert.assertTrue("Namespace should exist", catalog.namespaceExists(NS));
@@ -313,11 +310,9 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
 
     C catalog = catalog();
 
-    AssertHelpers.assertThrows(
-        "setProperties should fail if the namespace does not exist",
-        NoSuchNamespaceException.class,
-        "does not exist",
-        () -> catalog.setProperties(NS, ImmutableMap.of("test", "value")));
+    Assertions.assertThatThrownBy(() -> catalog.setProperties(NS, ImmutableMap.of("test", "value")))
+        .isInstanceOf(NoSuchNamespaceException.class)
+        .hasMessage("Namespace does not exist: newdb");
   }
 
   @Test
@@ -347,11 +342,9 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
 
     C catalog = catalog();
 
-    AssertHelpers.assertThrows(
-        "setProperties should fail if the namespace does not exist",
-        NoSuchNamespaceException.class,
-        "does not exist",
-        () -> catalog.removeProperties(NS, ImmutableSet.of("a", "b")));
+    Assertions.assertThatThrownBy(() -> catalog.removeProperties(NS, ImmutableSet.of("a", "b")))
+        .isInstanceOf(NoSuchNamespaceException.class)
+        .hasMessage("Namespace does not exist: newdb");
   }
 
   @Test
@@ -499,6 +492,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
 
     Assert.assertFalse("Table should not exist", catalog.tableExists(ident));
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(ident.namespace());
+    }
+
     Table table = catalog.buildTable(ident, SCHEMA).create();
     Assert.assertTrue("Table should exist", catalog.tableExists(ident));
 
@@ -573,16 +570,18 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
 
     TableIdentifier ident = TableIdentifier.of("ns", "table");
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(ident.namespace());
+    }
+
     Assert.assertFalse("Table should not exist", catalog.tableExists(ident));
 
     catalog.buildTable(ident, SCHEMA).create();
     Assert.assertTrue("Table should exist", catalog.tableExists(ident));
 
-    AssertHelpers.assertThrows(
-        "Should fail to create a table that already exists",
-        AlreadyExistsException.class,
-        "ns.table",
-        () -> catalog.buildTable(ident, OTHER_SCHEMA).create());
+    Assertions.assertThatThrownBy(() -> catalog.buildTable(ident, OTHER_SCHEMA).create())
+        .isInstanceOf(AlreadyExistsException.class)
+        .hasMessage("Table already exists: ns.table");
 
     Table table = catalog.loadTable(ident);
     Assert.assertEquals(
@@ -596,6 +595,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
     C catalog = catalog();
 
     TableIdentifier ident = TableIdentifier.of("ns", "table");
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(ident.namespace());
+    }
 
     Assert.assertFalse("Table should not exist", catalog.tableExists(ident));
 
@@ -632,6 +635,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
     C catalog = catalog();
 
     TableIdentifier ident = TableIdentifier.of("ns", "table");
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(ident.namespace());
+    }
 
     Assert.assertFalse("Table should not exist", catalog.tableExists(ident));
 
@@ -671,6 +678,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
     TableIdentifier tableIdent = TableIdentifier.of("ns", "table");
     TableIdentifier metaIdent = TableIdentifier.of("ns", "table", "files");
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(tableIdent.namespace());
+    }
+
     catalog.buildTable(tableIdent, SCHEMA).create();
 
     Table table = catalog.loadTable(metaIdent);
@@ -690,11 +701,9 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
     TableIdentifier ident = TableIdentifier.of("ns", "table");
 
     Assert.assertFalse("Table should not exist", catalog.tableExists(ident));
-    AssertHelpers.assertThrows(
-        "Should fail to load a nonexistent table",
-        NoSuchTableException.class,
-        ident.toString(),
-        () -> catalog.loadTable(ident));
+    Assertions.assertThatThrownBy(() -> catalog.loadTable(ident))
+        .isInstanceOf(NoSuchTableException.class)
+        .hasMessage("Table does not exist: ns.table");
   }
 
   @Test
@@ -733,11 +742,9 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
     Assert.assertFalse(
         "Destination table should not exist before rename", catalog.tableExists(RENAMED_TABLE));
 
-    AssertHelpers.assertThrows(
-        "Should reject renaming a table that does not exist",
-        NoSuchTableException.class,
-        "Table does not exist",
-        () -> catalog.renameTable(TABLE, RENAMED_TABLE));
+    Assertions.assertThatThrownBy(() -> catalog.renameTable(TABLE, RENAMED_TABLE))
+        .isInstanceOf(NoSuchTableException.class)
+        .hasMessageContaining("Table does not exist");
 
     Assert.assertFalse(
         "Destination table should not exist after failed rename",
@@ -762,11 +769,9 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
     Assert.assertTrue(
         "Destination table should exist after create", catalog.tableExists(RENAMED_TABLE));
 
-    AssertHelpers.assertThrows(
-        "Should reject renaming a table if the new name already exists",
-        AlreadyExistsException.class,
-        "Table already exists",
-        () -> catalog.renameTable(TABLE, RENAMED_TABLE));
+    Assertions.assertThatThrownBy(() -> catalog.renameTable(TABLE, RENAMED_TABLE))
+        .isInstanceOf(AlreadyExistsException.class)
+        .hasMessageContaining("Table already exists");
 
     Assert.assertTrue(
         "Source table should still exist after failed rename", catalog.tableExists(TABLE));
@@ -934,6 +939,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   public void testUpdateTableSchema() {
     C catalog = catalog();
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
+
     Table table = catalog.buildTable(TABLE, SCHEMA).create();
     UpdateSchema update = table.updateSchema().addColumn("new_col", Types.LongType.get());
 
@@ -953,6 +962,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   public void testUUIDValidation() {
     C catalog = catalog();
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
+
     Table table = catalog.buildTable(TABLE, SCHEMA).create();
     UpdateSchema update = table.updateSchema().addColumn("new_col", Types.LongType.get());
 
@@ -961,11 +974,9 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
 
     String expectedMessage =
         supportsServerSideRetry() ? "Requirement failed: UUID does not match" : "Cannot commit";
-    AssertHelpers.assertThrows(
-        "Should reject changes to tables that have been dropped and recreated",
-        CommitFailedException.class,
-        expectedMessage,
-        update::commit);
+    Assertions.assertThatThrownBy(update::commit)
+        .isInstanceOf(CommitFailedException.class)
+        .hasMessageContaining(expectedMessage);
 
     Table loaded = catalog.loadTable(TABLE);
     Assert.assertEquals(
@@ -980,6 +991,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
         "Schema update recovery is only supported with server-side retry",
         supportsServerSideRetry());
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Table table = catalog.buildTable(TABLE, SCHEMA).create();
 
@@ -1003,6 +1018,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   public void testUpdateTableSchemaConflict() {
     C catalog = catalog();
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
+
     Table table = catalog.buildTable(TABLE, SCHEMA).create();
 
     UpdateSchema update = table.updateSchema().addColumn("new_col", Types.LongType.get());
@@ -1015,11 +1034,9 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
     // attempt to commit the original update
     String expectedMessage =
         supportsServerSideRetry() ? "Requirement failed: current schema changed" : "Cannot commit";
-    AssertHelpers.assertThrows(
-        "Second schema update commit should fail because of a conflict",
-        CommitFailedException.class,
-        expectedMessage,
-        update::commit);
+    Assertions.assertThatThrownBy(update::commit)
+        .isInstanceOf(CommitFailedException.class)
+        .hasMessageContaining(expectedMessage);
 
     Table loaded = catalog.loadTable(TABLE);
     Assert.assertEquals(
@@ -1031,6 +1048,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testUpdateTableSchemaAssignmentConflict() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Table table = catalog.buildTable(TABLE, SCHEMA).create();
 
@@ -1047,11 +1068,9 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
         supportsServerSideRetry()
             ? "Requirement failed: last assigned field id changed"
             : "Cannot commit";
-    AssertHelpers.assertThrows(
-        "Second schema update commit should fail because of a conflict",
-        CommitFailedException.class,
-        expectedMessage,
-        update::commit);
+    Assertions.assertThatThrownBy(update::commit)
+        .isInstanceOf(CommitFailedException.class)
+        .hasMessageContaining(expectedMessage);
 
     Table loaded = catalog.loadTable(TABLE);
     Assert.assertEquals(
@@ -1063,6 +1082,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testUpdateTableSchemaThenRevert() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Table table = catalog.buildTable(TABLE, SCHEMA).create();
 
@@ -1085,6 +1108,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   public void testUpdateTableSpec() {
     C catalog = catalog();
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
+
     Table table = catalog.buildTable(TABLE, SCHEMA).create();
     UpdatePartitionSpec update = table.updateSpec().addField("shard", Expressions.bucket("id", 16));
 
@@ -1104,6 +1131,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
     Assume.assumeTrue(
         "Spec update recovery is only supported with server-side retry", supportsServerSideRetry());
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Table table = catalog.buildTable(TABLE, SCHEMA).create();
 
@@ -1131,6 +1162,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   public void testUpdateTableSpecConflict() {
     C catalog = catalog();
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
+
     Table table = catalog.buildTable(TABLE, SCHEMA).withPartitionSpec(SPEC).create();
 
     UpdatePartitionSpec update =
@@ -1147,11 +1182,9 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
         supportsServerSideRetry()
             ? "Requirement failed: default partition spec changed"
             : "Cannot commit";
-    AssertHelpers.assertThrows(
-        "Second partition spec update commit should fail because of a conflict",
-        CommitFailedException.class,
-        expectedMessage,
-        update::commit);
+    Assertions.assertThatThrownBy(update::commit)
+        .isInstanceOf(CommitFailedException.class)
+        .hasMessageContaining(expectedMessage);
 
     Table loaded = catalog.loadTable(TABLE);
 
@@ -1163,6 +1196,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testUpdateTableAssignmentSpecConflict() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Table table = catalog.buildTable(TABLE, SCHEMA).create();
 
@@ -1179,11 +1216,9 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
         supportsServerSideRetry()
             ? "Requirement failed: last assigned partition id changed"
             : "Cannot commit";
-    AssertHelpers.assertThrows(
-        "Second partition spec update commit should fail because of a conflict",
-        CommitFailedException.class,
-        expectedMessage,
-        update::commit);
+    Assertions.assertThatThrownBy(update::commit)
+        .isInstanceOf(CommitFailedException.class)
+        .hasMessageContaining(expectedMessage);
 
     Table loaded = catalog.loadTable(TABLE);
 
@@ -1195,6 +1230,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testUpdateTableSpecThenRevert() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     // create a v2 table. otherwise the spec update would produce a different spec with a void
     // partition field
@@ -1218,6 +1257,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   public void testUpdateTableSortOrder() {
     C catalog = catalog();
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
+
     Table table = catalog.buildTable(TABLE, SCHEMA).create();
     ReplaceSortOrder update = table.replaceSortOrder().asc(Expressions.bucket("id", 16)).asc("id");
 
@@ -1238,6 +1281,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
         "Sort order update recovery is only supported with server-side retry",
         supportsServerSideRetry());
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Table table = catalog.buildTable(TABLE, SCHEMA).create();
 
@@ -1265,6 +1312,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   public void testUpdateTableOrderThenRevert() {
     C catalog = catalog();
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
+
     Table table = catalog.buildTable(TABLE, SCHEMA).withSortOrder(WRITE_ORDER).create();
 
     table.replaceSortOrder().asc("id").commit();
@@ -1278,6 +1329,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testAppend() throws IOException {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Table table = catalog.buildTable(TABLE, SCHEMA).withPartitionSpec(SPEC).create();
 
@@ -1293,6 +1348,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testConcurrentAppendEmptyTable() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Table table = catalog.buildTable(TABLE, SCHEMA).withPartitionSpec(SPEC).create();
 
@@ -1313,6 +1372,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testConcurrentAppendNonEmptyTable() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Table table = catalog.buildTable(TABLE, SCHEMA).withPartitionSpec(SPEC).create();
 
@@ -1338,6 +1401,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testUpdateTransaction() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Table table = catalog.buildTable(TABLE, SCHEMA).create();
 
@@ -1371,6 +1438,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   public void testCreateTransaction() {
     C catalog = catalog();
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
+
     Transaction create = catalog.buildTable(TABLE, SCHEMA).createTransaction();
 
     Assert.assertFalse(
@@ -1391,6 +1462,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testCompleteCreateTransaction() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Map<String, String> properties =
         ImmutableMap.of("user", "someone", "created-at", "2022-02-25T00:38:19");
@@ -1439,6 +1514,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testCompleteCreateTransactionMultipleSchemas() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Map<String, String> properties =
         ImmutableMap.of("user", "someone", "created-at", "2022-02-25T00:38:19");
@@ -1525,6 +1604,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   public void testCompleteCreateTransactionV2() {
     C catalog = catalog();
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
+
     Map<String, String> properties =
         ImmutableMap.of(
             "user", "someone", "created-at", "2022-02-25T00:38:19", "format-version", "2");
@@ -1582,6 +1665,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   public void testConcurrentCreateTransaction() {
     C catalog = catalog();
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
+
     Transaction create = catalog.buildTable(TABLE, SCHEMA).createTransaction();
 
     Assert.assertFalse(
@@ -1598,11 +1685,9 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
         supportsServerSideRetry()
             ? "Requirement failed: table already exists"
             : "Table already exists";
-    AssertHelpers.assertThrows(
-        "Should fail because table was created concurrently",
-        AlreadyExistsException.class,
-        expectedMessage,
-        create::commitTransaction);
+    Assertions.assertThatThrownBy(create::commitTransaction)
+        .isInstanceOf(AlreadyExistsException.class)
+        .hasMessageStartingWith(expectedMessage);
 
     // validate the concurrently created table is unmodified
     Table table = catalog.loadTable(TABLE);
@@ -1616,6 +1701,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testCreateOrReplaceTransactionCreate() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Transaction create = catalog.buildTable(TABLE, SCHEMA).createOrReplaceTransaction();
 
@@ -1637,6 +1726,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testCompleteCreateOrReplaceTransactionCreate() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Map<String, String> properties =
         ImmutableMap.of("user", "someone", "created-at", "2022-02-25T00:38:19");
@@ -1686,6 +1779,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   public void testCreateOrReplaceReplaceTransactionReplace() {
     C catalog = catalog();
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
+
     Table original = catalog.buildTable(TABLE, OTHER_SCHEMA).create();
 
     Assert.assertTrue("Table should exist before replaceTransaction", catalog.tableExists(TABLE));
@@ -1726,6 +1823,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testCompleteCreateOrReplaceTransactionReplace() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Table original = catalog.buildTable(TABLE, OTHER_SCHEMA).create();
 
@@ -1796,6 +1897,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
 
     C catalog = catalog();
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
+
     Transaction createOrReplace = catalog.buildTable(TABLE, SCHEMA).createOrReplaceTransaction();
 
     Assert.assertFalse(
@@ -1811,11 +1916,9 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
         supportsServerSideRetry()
             ? "Requirement failed: table already exists"
             : "Table already exists";
-    AssertHelpers.assertThrows(
-        "Should fail because table was created concurrently",
-        AlreadyExistsException.class,
-        expectedMessage,
-        createOrReplace::commitTransaction);
+    Assertions.assertThatThrownBy(createOrReplace::commitTransaction)
+        .isInstanceOf(AlreadyExistsException.class)
+        .hasMessage(expectedMessage);
 
     // validate the concurrently created table is unmodified
     Table table = catalog.loadTable(TABLE);
@@ -1829,6 +1932,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testReplaceTransaction() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Table original = catalog.buildTable(TABLE, OTHER_SCHEMA).create();
 
@@ -1870,6 +1977,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testCompleteReplaceTransaction() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Table original = catalog.buildTable(TABLE, OTHER_SCHEMA).create();
 
@@ -1936,16 +2047,22 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   public void testReplaceTransactionRequiresTableExists() {
     C catalog = catalog();
 
-    AssertHelpers.assertThrows(
-        "Should fail to create replace transaction with a missing table",
-        NoSuchTableException.class,
-        "Table does not exist",
-        () -> catalog.buildTable(TABLE, SCHEMA).replaceTransaction());
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
+
+    Assertions.assertThatThrownBy(() -> catalog.buildTable(TABLE, SCHEMA).replaceTransaction())
+        .isInstanceOf(NoSuchTableException.class)
+        .hasMessage("Table does not exist: newdb.table");
   }
 
   @Test
   public void testConcurrentReplaceTransactions() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Transaction transaction = catalog.buildTable(TABLE, SCHEMA).createTransaction();
     transaction.newFastAppend().appendFile(FILE_A).commit();
@@ -1988,6 +2105,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   public void testConcurrentReplaceTransactionSchema() {
     C catalog = catalog();
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
+
     Transaction transaction = catalog.buildTable(TABLE, OTHER_SCHEMA).createTransaction();
     transaction.newFastAppend().appendFile(FILE_A).commit();
     transaction.commitTransaction();
@@ -2024,6 +2145,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testConcurrentReplaceTransactionSchema2() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Transaction transaction = catalog.buildTable(TABLE, OTHER_SCHEMA).createTransaction();
     transaction.newFastAppend().appendFile(FILE_A).commit();
@@ -2064,6 +2189,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
 
     C catalog = catalog();
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
+
     Transaction transaction = catalog.buildTable(TABLE, OTHER_SCHEMA).createTransaction();
     transaction.newFastAppend().appendFile(FILE_A).commit();
     transaction.commitTransaction();
@@ -2088,16 +2217,19 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
 
     // even though the new schema is identical, the assertion that the last assigned id has not
     // changed will fail
-    AssertHelpers.assertThrows(
-        "Should reject concurrent schema update",
-        CommitFailedException.class,
-        "last assigned field id changed",
-        secondReplace::commitTransaction);
+    Assertions.assertThatThrownBy(secondReplace::commitTransaction)
+        .isInstanceOf(CommitFailedException.class)
+        .hasMessageStartingWith(
+            "Commit failed: Requirement failed: last assigned field id changed");
   }
 
   @Test
   public void testConcurrentReplaceTransactionPartitionSpec() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Transaction transaction = catalog.buildTable(TABLE, SCHEMA).createTransaction();
     transaction.newFastAppend().appendFile(FILE_A).commit();
@@ -2133,6 +2265,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testConcurrentReplaceTransactionPartitionSpec2() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Transaction transaction = catalog.buildTable(TABLE, SCHEMA).createTransaction();
     transaction.newFastAppend().appendFile(FILE_A).commit();
@@ -2170,6 +2306,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
     Assume.assumeTrue("Spec conflicts are detected server-side", supportsServerSideRetry());
     C catalog = catalog();
 
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
+
     Transaction transaction = catalog.buildTable(TABLE, SCHEMA).createTransaction();
     transaction.newFastAppend().appendFile(FILE_A).commit();
     transaction.commitTransaction();
@@ -2196,16 +2336,19 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
 
     // even though the new spec is identical, the assertion that the last assigned id has not
     // changed will fail
-    AssertHelpers.assertThrows(
-        "Should reject concurrent spec update",
-        CommitFailedException.class,
-        "last assigned partition id changed",
-        secondReplace::commitTransaction);
+    Assertions.assertThatThrownBy(secondReplace::commitTransaction)
+        .isInstanceOf(CommitFailedException.class)
+        .hasMessageStartingWith(
+            "Commit failed: Requirement failed: last assigned partition id changed");
   }
 
   @Test
   public void testConcurrentReplaceTransactionSortOrder() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Transaction transaction = catalog.buildTable(TABLE, SCHEMA).createTransaction();
     transaction.newFastAppend().appendFile(FILE_A).commit();
@@ -2239,6 +2382,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testConcurrentReplaceTransactionSortOrderConflict() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Transaction transaction = catalog.buildTable(TABLE, SCHEMA).createTransaction();
     transaction.newFastAppend().appendFile(FILE_A).commit();
@@ -2279,6 +2426,10 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
   @Test
   public void testMetadataFileLocationsRemovalAfterCommit() {
     C catalog = catalog();
+
+    if (requiresNamespaceCreate()) {
+      catalog.createNamespace(NS);
+    }
 
     Table table = catalog.buildTable(TABLE, SCHEMA).create();
     table.updateSchema().addColumn("a", Types.LongType.get()).commit();
@@ -2323,6 +2474,17 @@ public abstract class CatalogTests<C extends Catalog & SupportsNamespaces> {
       metadataFileLocations = ReachableFileUtil.metadataFileLocations(table, false);
       Assertions.assertThat(metadataFileLocations).hasSize(maxPreviousVersionsToKeep + 1);
     }
+  }
+
+  @Test
+  public void tableCreationWithoutNamespace() {
+    Assumptions.assumeTrue(requiresNamespaceCreate());
+
+    Assertions.assertThatThrownBy(
+            () ->
+                catalog().buildTable(TableIdentifier.of("non-existing", "table"), SCHEMA).create())
+        .isInstanceOf(NoSuchNamespaceException.class)
+        .hasMessageEndingWith("Namespace does not exist: non-existing");
   }
 
   private static void assertEmpty(String context, Catalog catalog, Namespace ns) {
