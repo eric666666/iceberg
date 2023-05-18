@@ -31,7 +31,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
-import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import org.apache.iceberg.AllManifestsTable;
 import org.apache.iceberg.BaseTable;
@@ -44,6 +44,7 @@ import org.apache.iceberg.MetadataTableType;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.ReachableFileUtil;
 import org.apache.iceberg.StaticTableOperations;
+import org.apache.iceberg.StatisticsFile;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.exceptions.NotFoundException;
@@ -65,28 +66,23 @@ import org.apache.iceberg.spark.JobGroupInfo;
 import org.apache.iceberg.spark.JobGroupUtils;
 import org.apache.iceberg.spark.SparkTableUtil;
 import org.apache.iceberg.spark.source.SerializableTableWithSize;
-import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.util.Tasks;
 import org.apache.spark.SparkContext;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.api.java.function.FlatMapFunction;
-import org.apache.spark.api.java.function.MapFunction;
 import org.apache.spark.broadcast.Broadcast;
 import org.apache.spark.sql.Column;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.internal.SQLConf;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 abstract class BaseSparkAction<ThisT> {
 
-  public static final String USE_CACHING = "use-caching";
-  public static final boolean USE_CACHING_DEFAULT = true;
-
   protected static final String MANIFEST = "Manifest";
   protected static final String MANIFEST_LIST = "Manifest List";
+  protected static final String STATISTICS_FILES = "Statistics Files";
   protected static final String OTHERS = "Others";
 
   protected static final String FILE_PATH = "file_path";
@@ -207,6 +203,18 @@ abstract class BaseSparkAction<ThisT> {
     return toFileInfoDS(manifestLists, MANIFEST_LIST);
   }
 
+  protected Dataset<FileInfo> statisticsFileDS(Table table, Set<Long> snapshotIds) {
+    Predicate<StatisticsFile> predicate;
+    if (snapshotIds == null) {
+      predicate = statisticsFile -> true;
+    } else {
+      predicate = statisticsFile -> snapshotIds.contains(statisticsFile.snapshotId());
+    }
+
+    List<String> statisticsFiles = ReachableFileUtil.statisticsFilesLocations(table, predicate);
+    return toFileInfoDS(statisticsFiles, STATISTICS_FILES);
+  }
+
   protected Dataset<FileInfo> otherMetadataFileDS(Table table) {
     return otherMetadataFileDS(table, false /* include all reachable old metadata locations */);
   }
@@ -304,6 +312,7 @@ abstract class BaseSparkAction<ThisT> {
     private final AtomicLong equalityDeleteFilesCount = new AtomicLong(0L);
     private final AtomicLong manifestsCount = new AtomicLong(0L);
     private final AtomicLong manifestListsCount = new AtomicLong(0L);
+    private final AtomicLong statisticsFilesCount = new AtomicLong(0L);
     private final AtomicLong otherFilesCount = new AtomicLong(0L);
 
     public void deletedFiles(String type, int numFiles) {
@@ -321,6 +330,9 @@ abstract class BaseSparkAction<ThisT> {
 
       } else if (MANIFEST_LIST.equalsIgnoreCase(type)) {
         manifestListsCount.addAndGet(numFiles);
+
+      } else if (STATISTICS_FILES.equalsIgnoreCase(type)) {
+        statisticsFilesCount.addAndGet(numFiles);
 
       } else if (OTHERS.equalsIgnoreCase(type)) {
         otherFilesCount.addAndGet(numFiles);
@@ -351,6 +363,10 @@ abstract class BaseSparkAction<ThisT> {
         manifestListsCount.incrementAndGet();
         LOG.debug("Deleted manifest list: {}", path);
 
+      } else if (STATISTICS_FILES.equalsIgnoreCase(type)) {
+        statisticsFilesCount.incrementAndGet();
+        LOG.debug("Deleted statistics file: {}", path);
+
       } else if (OTHERS.equalsIgnoreCase(type)) {
         otherFilesCount.incrementAndGet();
         LOG.debug("Deleted other metadata file: {}", path);
@@ -380,6 +396,10 @@ abstract class BaseSparkAction<ThisT> {
       return manifestListsCount.get();
     }
 
+    public long statisticsFilesCount() {
+      return statisticsFilesCount.get();
+    }
+
     public long otherFilesCount() {
       return otherFilesCount.get();
     }
@@ -390,6 +410,7 @@ abstract class BaseSparkAction<ThisT> {
           + equalityDeleteFilesCount()
           + manifestsCount()
           + manifestListsCount()
+          + statisticsFilesCount()
           + otherFilesCount();
     }
   }
@@ -428,27 +449,6 @@ abstract class BaseSparkAction<ThisT> {
 
     static FileInfo toFileInfo(ContentFile<?> file) {
       return new FileInfo(file.path().toString(), file.content().toString());
-    }
-  }
-
-  protected <T, U> U withReusableDS(Dataset<T> ds, Function<Dataset<T>, U> func) {
-    Dataset<T> reusableDS;
-    boolean useCaching =
-        PropertyUtil.propertyAsBoolean(options(), USE_CACHING, USE_CACHING_DEFAULT);
-    if (useCaching) {
-      reusableDS = ds.cache();
-    } else {
-      int parallelism = SQLConf.get().numShufflePartitions();
-      reusableDS =
-          ds.repartition(parallelism).map((MapFunction<T, T>) value -> value, ds.exprEnc());
-    }
-
-    try {
-      return func.apply(reusableDS);
-    } finally {
-      if (useCaching) {
-        reusableDS.unpersist(false);
-      }
     }
   }
 }

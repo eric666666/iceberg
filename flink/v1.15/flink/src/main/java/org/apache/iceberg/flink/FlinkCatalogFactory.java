@@ -53,7 +53,7 @@ import org.slf4j.LoggerFactory;
  *
  * <ul>
  *   <li><code>type</code> - Flink catalog factory key, should be "iceberg"
- *   <li><code>catalog-type</code> - iceberg catalog type, "hive" or "hadoop"
+ *   <li><code>catalog-type</code> - iceberg catalog type, "hive", "hadoop" or "rest"
  *   <li><code>uri</code> - the Hive Metastore URI (Hive catalog only)
  *   <li><code>clients</code> - the Hive Client Pool Size (Hive catalog only)
  *   <li><code>warehouse</code> - the warehouse path (Hadoop catalog only)
@@ -72,6 +72,7 @@ public class FlinkCatalogFactory implements CatalogFactory {
   public static final String ICEBERG_CATALOG_TYPE = "catalog-type";
   public static final String ICEBERG_CATALOG_TYPE_HADOOP = "hadoop";
   public static final String ICEBERG_CATALOG_TYPE_HIVE = "hive";
+  public static final String ICEBERG_CATALOG_TYPE_REST = "rest";
 
   public static final String HIVE_CONF_DIR = "hive-conf-dir";
   public static final String HADOOP_CONF_DIR = "hadoop-conf-dir";
@@ -137,9 +138,12 @@ public class FlinkCatalogFactory implements CatalogFactory {
       case ICEBERG_CATALOG_TYPE_HADOOP:
         return CatalogLoader.hadoop(name, hadoopConf, properties);
 
+      case ICEBERG_CATALOG_TYPE_REST:
+        return CatalogLoader.rest(name, hadoopConf, properties);
+
       default:
         throw new UnsupportedOperationException(
-            "Unknown catalog-type: " + catalogType + " (Must be 'hive' or 'hadoop')");
+            "Unknown catalog-type: " + catalogType + " (Must be 'hive', 'hadoop' or 'rest')");
     }
   }
 

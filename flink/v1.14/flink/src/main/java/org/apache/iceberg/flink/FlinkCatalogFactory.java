@@ -54,7 +54,7 @@ import java.util.Map;
  *
  * <ul>
  *   <li><code>type</code> - Flink catalog factory key, should be "iceberg"
- *   <li><code>catalog-type</code> - iceberg catalog type, "hive" or "hadoop"
+ *   <li><code>catalog-type</code> - iceberg catalog type, "hive", "hadoop" or "rest"
  *   <li><code>uri</code> - the Hive Metastore URI (Hive catalog only)
  *   <li><code>clients</code> - the Hive Client Pool Size (Hive catalog only)
  *   <li><code>warehouse</code> - the warehouse path (Hadoop catalog only)
@@ -74,6 +74,8 @@ public class FlinkCatalogFactory implements CatalogFactory {
   public static final String ICEBERG_CATALOG_TYPE_HADOOP = "hadoop";
   public static final String ICEBERG_CATALOG_TYPE_HIVE = "hive";
 
+  public static final String ICEBERG_CATALOG_TYPE_REST = "rest";
+
   public static final String HIVE_CONF_DIR = "hive-conf-dir";
   public static final String HADOOP_CONF_DIR = "hadoop-conf-dir";
   public static final String DEFAULT_DATABASE = "default-database";
@@ -88,7 +90,7 @@ public class FlinkCatalogFactory implements CatalogFactory {
    * Create an Iceberg {@link org.apache.iceberg.catalog.Catalog} loader to be used by this Flink
    * catalog adapter.
    *
-   * @param name       Flink's catalog name
+   * @param name Flink's catalog name
    * @param properties Flink's catalog properties
    * @param hadoopConf Hadoop configuration for catalog
    * @return an Iceberg catalog loader
@@ -99,11 +101,11 @@ public class FlinkCatalogFactory implements CatalogFactory {
     if (catalogImpl != null) {
       String catalogType = properties.get(ICEBERG_CATALOG_TYPE);
       Preconditions.checkArgument(
-              catalogType == null,
-              "Cannot create catalog %s, both catalog-type and catalog-impl are set: catalog-type=%s, catalog-impl=%s",
-              name,
-              catalogType,
-              catalogImpl);
+          catalogType == null,
+          "Cannot create catalog %s, both catalog-type and catalog-impl are set: catalog-type=%s, catalog-impl=%s",
+          name,
+          catalogType,
+          catalogImpl);
       return CatalogLoader.custom(name, properties, hadoopConf, catalogImpl);
     }
 
@@ -137,9 +139,12 @@ public class FlinkCatalogFactory implements CatalogFactory {
       case ICEBERG_CATALOG_TYPE_HADOOP:
         return CatalogLoader.hadoop(name, hadoopConf, properties);
 
+      case ICEBERG_CATALOG_TYPE_REST:
+        return CatalogLoader.rest(name, hadoopConf, properties);
+
       default:
         throw new UnsupportedOperationException(
-                "Unknown catalog-type: " + catalogType + " (Must be 'hive' or 'hadoop')");
+            "Unknown catalog-type: " + catalogType + " (Must be 'hive', 'hadoop' or 'rest')");
     }
   }
 
@@ -177,26 +182,26 @@ public class FlinkCatalogFactory implements CatalogFactory {
     }
 
     boolean cacheEnabled =
-            PropertyUtil.propertyAsBoolean(
-                    properties, CatalogProperties.CACHE_ENABLED, CatalogProperties.CACHE_ENABLED_DEFAULT);
+        PropertyUtil.propertyAsBoolean(
+            properties, CatalogProperties.CACHE_ENABLED, CatalogProperties.CACHE_ENABLED_DEFAULT);
 
     long cacheExpirationIntervalMs =
-            PropertyUtil.propertyAsLong(
-                    properties,
-                    CatalogProperties.CACHE_EXPIRATION_INTERVAL_MS,
-                    CatalogProperties.CACHE_EXPIRATION_INTERVAL_MS_OFF);
+        PropertyUtil.propertyAsLong(
+            properties,
+            CatalogProperties.CACHE_EXPIRATION_INTERVAL_MS,
+            CatalogProperties.CACHE_EXPIRATION_INTERVAL_MS_OFF);
     Preconditions.checkArgument(
-            cacheExpirationIntervalMs != 0,
-            "%s is not allowed to be 0.",
-            CatalogProperties.CACHE_EXPIRATION_INTERVAL_MS);
+        cacheExpirationIntervalMs != 0,
+        "%s is not allowed to be 0.",
+        CatalogProperties.CACHE_EXPIRATION_INTERVAL_MS);
 
     return new FlinkCatalog(
-            name,
-            defaultDatabase,
-            baseNamespace,
-            catalogLoader,
-            cacheEnabled,
-            cacheExpirationIntervalMs);
+        name,
+        defaultDatabase,
+        baseNamespace,
+        catalogLoader,
+        cacheEnabled,
+        cacheExpirationIntervalMs);
   }
 
   private static Configuration mergeHiveConf(
@@ -225,9 +230,9 @@ public class FlinkCatalogFactory implements CatalogFactory {
 
     if (!Strings.isNullOrEmpty(hiveConfDir)) {
       Preconditions.checkState(
-              Files.exists(Paths.get(hiveConfDir, "hive-site.xml")),
-              "There should be a hive-site.xml file under the directory %s",
-              hiveConfDir);
+          Files.exists(Paths.get(hiveConfDir, "hive-site.xml")),
+          "There should be a hive-site.xml file under the directory %s",
+          hiveConfDir);
       newConf.addResource(new Path(hiveConfDir, "hive-site.xml"));
     } else {
       // If don't provide the hive-site.xml path explicitly, it will try to load resource from
@@ -241,14 +246,14 @@ public class FlinkCatalogFactory implements CatalogFactory {
 
     if (!Strings.isNullOrEmpty(hadoopConfDir)) {
       Preconditions.checkState(
-              Files.exists(Paths.get(hadoopConfDir, "hdfs-site.xml")),
-              "Failed to load Hadoop configuration: missing %s",
-              Paths.get(hadoopConfDir, "hdfs-site.xml"));
+          Files.exists(Paths.get(hadoopConfDir, "hdfs-site.xml")),
+          "Failed to load Hadoop configuration: missing %s",
+          Paths.get(hadoopConfDir, "hdfs-site.xml"));
       newConf.addResource(new Path(hadoopConfDir, "hdfs-site.xml"));
       Preconditions.checkState(
-              Files.exists(Paths.get(hadoopConfDir, "core-site.xml")),
-              "Failed to load Hadoop configuration: missing %s",
-              Paths.get(hadoopConfDir, "core-site.xml"));
+          Files.exists(Paths.get(hadoopConfDir, "core-site.xml")),
+          "Failed to load Hadoop configuration: missing %s",
+          Paths.get(hadoopConfDir, "core-site.xml"));
       newConf.addResource(new Path(hadoopConfDir, "core-site.xml"));
     }
 
