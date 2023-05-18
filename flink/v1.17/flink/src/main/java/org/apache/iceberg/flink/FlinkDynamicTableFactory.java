@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.flink;
 
+import java.io.IOException;
 import java.util.Map;
 import java.util.Set;
 import org.apache.flink.configuration.ConfigOption;
@@ -163,8 +164,12 @@ public class FlinkDynamicTableFactory
 
     org.apache.hadoop.conf.Configuration hadoopConf = FlinkCatalogFactory.clusterHadoopConf();
     FlinkCatalogFactory factory = new FlinkCatalogFactory();
-    FlinkCatalog flinkCatalog =
-        (FlinkCatalog) factory.createCatalog(catalogName, tableProps, hadoopConf);
+    FlinkCatalog flinkCatalog = null;
+    try {
+      flinkCatalog = (FlinkCatalog) factory.createCatalog(catalogName, tableProps, hadoopConf);
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
     ObjectPath objectPath = new ObjectPath(catalogDatabase, catalogTable);
 
     // Create database if not exists in the external catalog.

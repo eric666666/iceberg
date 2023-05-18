@@ -23,6 +23,7 @@ import static org.apache.spark.sql.functions.min;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.DeleteFiles;
 import org.apache.iceberg.FileMetadata;
@@ -37,6 +38,7 @@ import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.JobGroupInfo;
 import org.apache.iceberg.types.Types;
+import org.apache.iceberg.util.PropertyUtil;
 import org.apache.spark.api.java.function.MapFunction;
 import org.apache.spark.sql.Column;
 import org.apache.spark.sql.Dataset;
@@ -44,6 +46,7 @@ import org.apache.spark.sql.Encoders;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema;
+import org.apache.spark.sql.internal.SQLConf;
 
 /**
  * An action that removes dangling delete files from the current snapshot. A delete file is dangling
@@ -61,6 +64,8 @@ import org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema;
 public class RemoveDanglingDeletesSparkAction
     extends BaseSnapshotUpdateSparkAction<RemoveDanglingDeletesSparkAction>
     implements RemoveDanglingDeleteFiles {
+  public static final String USE_CACHING = "use-caching";
+  public static final boolean USE_CACHING_DEFAULT = true;
 
   private final Table table;
   private Expression filter = Expressions.alwaysTrue();
@@ -240,6 +245,27 @@ public class RemoveDanglingDeletesSparkAction
           .withFileSizeInBytes(fileSize)
           .withRecordCount(recordCount)
           .build();
+    }
+  }
+
+  protected <T, U> U withReusableDS(Dataset<T> ds, Function<Dataset<T>, U> func) {
+    Dataset<T> reusableDS;
+    boolean useCaching =
+        PropertyUtil.propertyAsBoolean(options(), USE_CACHING, USE_CACHING_DEFAULT);
+    if (useCaching) {
+      reusableDS = ds.cache();
+    } else {
+      int parallelism = SQLConf.get().numShufflePartitions();
+      reusableDS =
+          ds.repartition(parallelism).map((MapFunction<T, T>) value -> value, ds.exprEnc());
+    }
+
+    try {
+      return func.apply(reusableDS);
+    } finally {
+      if (useCaching) {
+        reusableDS.unpersist(false);
+      }
     }
   }
 }

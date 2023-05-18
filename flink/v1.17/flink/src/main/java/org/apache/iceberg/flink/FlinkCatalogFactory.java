@@ -18,6 +18,15 @@
  */
 package org.apache.iceberg.flink;
 
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.flink.configuration.GlobalConfiguration;
@@ -36,16 +45,6 @@ import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.util.PropertyUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.net.URL;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 
 /**
  * A Flink Catalog factory implementation that creates {@link FlinkCatalog}.
@@ -95,7 +94,7 @@ public class FlinkCatalogFactory implements CatalogFactory {
    * @return an Iceberg catalog loader
    */
   static CatalogLoader createCatalogLoader(
-          String name, Map<String, String> properties, Configuration hadoopConf) throws IOException {
+      String name, Map<String, String> properties, Configuration hadoopConf) {
     String catalogImpl = properties.get(CatalogProperties.CATALOG_IMPL);
     if (catalogImpl != null) {
       String catalogType = properties.get(ICEBERG_CATALOG_TYPE);
@@ -111,28 +110,41 @@ public class FlinkCatalogFactory implements CatalogFactory {
     String catalogType = properties.getOrDefault(ICEBERG_CATALOG_TYPE, ICEBERG_CATALOG_TYPE_HIVE);
     switch (catalogType.toLowerCase(Locale.ENGLISH)) {
       case ICEBERG_CATALOG_TYPE_HIVE:
-
         String hiveConfDir = properties.get(HIVE_CONF_DIR);
 
         // zengbao 05-06
         String keytabFileName = properties.get(DIST_KEYTAB);
         if (StringUtils.isNotBlank(keytabFileName) && StringUtils.isNotBlank(hiveConfDir)) {
-          //下载keytab文件
-          String tempDir = FileUtils.getTempDirectory().getAbsolutePath() + File.separator + "stp-system-conf";
+          // 下载keytab文件
+          String tempDir =
+              FileUtils.getTempDirectory().getAbsolutePath() + File.separator + "stp-system-conf";
 
           Path f = new Path(keytabFileName);
-          FileSystem fs = f.getFileSystem(new Configuration());
-          if (!fs.exists(f)) {
-            throw new FileNotFoundException("Keytab file " + f.getName() + "is not found in " + keytabFileName);
+          FileSystem fs = null;
+          try {
+            fs = f.getFileSystem(new Configuration());
+
+            if (!fs.exists(f)) {
+              throw new FileNotFoundException(
+                  "Keytab file " + f.getName() + "is not found in " + keytabFileName);
+            }
+
+            fs.copyToLocalFile(f, new Path(tempDir, f.getName()));
+          } catch (IOException e) {
+            throw new RuntimeException(e);
           }
-          fs.copyToLocalFile(f, new Path(tempDir, f.getName()));
         }
 
         // The values of properties 'uri', 'warehouse', 'hive-conf-dir' are allowed to be null, in
         // that case it will
         // fallback to parse those values from hadoop configuration which is loaded from classpath.
         String hadoopConfDir = properties.get(HADOOP_CONF_DIR);
-        Configuration newHadoopConf = mergeHiveConf(hadoopConf, hiveConfDir, hadoopConfDir);
+        Configuration newHadoopConf = null;
+        try {
+          newHadoopConf = mergeHiveConf(hadoopConf, hiveConfDir, hadoopConfDir);
+        } catch (IOException e) {
+          throw new RuntimeException(e);
+        }
         return CatalogLoader.hive(name, newHadoopConf, properties);
 
       case ICEBERG_CATALOG_TYPE_HADOOP:
@@ -171,7 +183,7 @@ public class FlinkCatalogFactory implements CatalogFactory {
   }
 
   protected Catalog createCatalog(
-          String name, Map<String, String> properties, Configuration hadoopConf) throws IOException {
+      String name, Map<String, String> properties, Configuration hadoopConf) throws IOException {
     CatalogLoader catalogLoader = createCatalogLoader(name, properties, hadoopConf);
     String defaultDatabase = properties.getOrDefault(DEFAULT_DATABASE, DEFAULT_DATABASE_NAME);
 
@@ -204,13 +216,13 @@ public class FlinkCatalogFactory implements CatalogFactory {
   }
 
   private static Configuration mergeHiveConf(
-          Configuration hadoopConf, String hiveConfDir, String hadoopConfDir) throws IOException {
+      Configuration hadoopConf, String hiveConfDir, String hadoopConfDir) throws IOException {
     Configuration newConf = new Configuration(hadoopConf);
-
 
     // 22-05-06 增加hive-site.xml hdfs路径的支持
     if (StringUtils.isNotBlank(hiveConfDir) && hiveConfDir.startsWith("hdfs:")) {
-      String tempDir = FileUtils.getTempDirectory().getAbsolutePath() + File.separator + "stp-system-conf";
+      String tempDir =
+          FileUtils.getTempDirectory().getAbsolutePath() + File.separator + "stp-system-conf";
       String hiveSitePathStr = hiveConfDir + "/hive-site.xml";
       Path hiveSiteHdfsPath = new Path(hiveSitePathStr);
       FileSystem fs = hiveSiteHdfsPath.getFileSystem(newConf);
@@ -225,7 +237,6 @@ public class FlinkCatalogFactory implements CatalogFactory {
 
       return newConf;
     }
-
 
     if (!Strings.isNullOrEmpty(hiveConfDir)) {
       Preconditions.checkState(

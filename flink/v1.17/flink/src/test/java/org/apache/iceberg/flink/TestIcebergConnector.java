@@ -220,7 +220,7 @@ public class TestIcebergConnector extends FlinkTestBase {
     }
   }
 
-  private void testCreateConnectorTable() {
+  private void testCreateConnectorTable() throws IOException {
     Map<String, String> tableProps = createTableProps();
 
     // Create table under the flink's current database.
@@ -249,7 +249,7 @@ public class TestIcebergConnector extends FlinkTestBase {
   }
 
   @Test
-  public void testCreateTableUnderDefaultDatabase() {
+  public void testCreateTableUnderDefaultDatabase() throws IOException {
     testCreateConnectorTable();
   }
 
@@ -265,6 +265,8 @@ public class TestIcebergConnector extends FlinkTestBase {
               () -> sql("CREATE TABLE `default_catalog`.`%s`.`%s`", databaseName(), TABLE_NAME))
           .isInstanceOf(org.apache.flink.table.api.TableException.class)
           .hasMessageStartingWith("Could not execute CreateTable in path");
+    } catch (IOException e) {
+      throw new RuntimeException(e);
     } finally {
       sql("DROP TABLE IF EXISTS `%s`.`%s`", databaseName(), TABLE_NAME);
       if (!isDefaultDatabaseName()) {
