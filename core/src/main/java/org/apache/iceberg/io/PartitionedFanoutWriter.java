@@ -23,6 +23,7 @@ import java.util.Map;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.PartitionKey;
 import org.apache.iceberg.PartitionSpec;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 
 public abstract class PartitionedFanoutWriter<T> extends BaseTaskWriter<T> {
@@ -48,19 +49,18 @@ public abstract class PartitionedFanoutWriter<T> extends BaseTaskWriter<T> {
   protected abstract PartitionKey partition(T row);
 
   @Override
-  public void write(T row) throws IOException {
+  public void write(T row, Schema schema) throws IOException {
     PartitionKey partitionKey = partition(row);
 
     RollingFileWriter writer = writers.get(partitionKey);
     if (writer == null) {
-      // NOTICE: we need to copy a new partition key here, in case of messing up the keys in
-      // writers.
+      // NOTICE: we need to copy a new partition key here, in case of messing up the keys in writers.
       PartitionKey copiedKey = partitionKey.copy();
-      writer = new RollingFileWriter(copiedKey);
+      writer = new RollingFileWriter(copiedKey, schema);
       writers.put(copiedKey, writer);
     }
 
-    writer.write(row);
+    writer.write(row, schema);
   }
 
   @Override

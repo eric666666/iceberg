@@ -16,8 +16,10 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iceberg.flink;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -34,7 +36,7 @@ class FlinkConfParser {
   private final ReadableConfig readableConfig;
 
   FlinkConfParser(Table table, Map<String, String> options, ReadableConfig readableConfig) {
-    this.tableProperties = table.properties();
+    this.tableProperties = table != null ? table.properties() : Collections.emptyMap();
     this.options = options;
     this.readableConfig = readableConfig;
   }

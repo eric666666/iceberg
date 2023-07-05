@@ -21,6 +21,7 @@ package org.apache.iceberg.io;
 import java.io.Closeable;
 import java.io.IOException;
 import org.apache.iceberg.DataFile;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 
 /**
@@ -31,7 +32,7 @@ import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 public interface TaskWriter<T> extends Closeable {
 
   /** Write the row into the data files. */
-  void write(T row) throws IOException;
+  void write(T row, Schema schema) throws IOException;
 
   /**
    * Close the writer and delete the completed files if possible when aborting.

@@ -153,7 +153,7 @@ class SortedPosDeleteWriter<T> implements FileWriter<PositionDelete<T>, DeleteWr
     }
 
     PositionDeleteWriter<T> writer =
-        appenderFactory.newPosDeleteWriter(outputFile, format, partition);
+        appenderFactory.newPosDeleteWriter(outputFile, format, partition, null);
     PositionDelete<T> posDelete = PositionDelete.create();
     try (PositionDeleteWriter<T> closeableWriter = writer) {
       // Sort all the paths.

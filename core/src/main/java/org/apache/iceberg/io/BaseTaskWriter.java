@@ -40,8 +40,12 @@ import org.apache.iceberg.util.StructLikeMap;
 import org.apache.iceberg.util.StructProjection;
 import org.apache.iceberg.util.Tasks;
 import org.apache.iceberg.util.ThreadPools;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public abstract class BaseTaskWriter<T> implements TaskWriter<T> {
+  private static Logger LOG = LoggerFactory.getLogger(BaseTaskWriter.class);
+
   private final List<DataFile> completedDataFiles = Lists.newArrayList();
   private final List<DeleteFile> completedDeleteFiles = Lists.newArrayList();
   private final CharSequenceSet referencedDataFiles = CharSequenceSet.empty();
@@ -117,8 +121,8 @@ public abstract class BaseTaskWriter<T> implements TaskWriter<T> {
       Preconditions.checkNotNull(deleteSchema, "Equality-delete schema cannot be null.");
       this.structProjection = StructProjection.create(schema, deleteSchema);
 
-      this.dataWriter = new RollingFileWriter(partition);
-      this.eqDeleteWriter = new RollingEqDeleteWriter(partition);
+      this.dataWriter = new RollingFileWriter(partition, schema);
+      this.eqDeleteWriter = new RollingEqDeleteWriter(partition, schema);
       this.posDeleteWriter =
           new SortedPosDeleteWriter<>(appenderFactory, fileFactory, format, partition);
       this.insertedRowMap = StructLikeMap.create(deleteSchema.asStruct());
@@ -130,7 +134,8 @@ public abstract class BaseTaskWriter<T> implements TaskWriter<T> {
     /** Wrap the passed in key of a row as a {@link StructLike} */
     protected abstract StructLike asStructLikeKey(T key);
 
-    public void write(T row) throws IOException {
+    public void write(T row, Schema schema) throws IOException {
+
       PathOffset pathOffset = PathOffset.of(dataWriter.currentPath(), dataWriter.currentRows());
 
       // Create a copied key from this row.
@@ -143,7 +148,15 @@ public abstract class BaseTaskWriter<T> implements TaskWriter<T> {
         posDeleteWriter.delete(previous.path, previous.rowOffset, null);
       }
 
-      dataWriter.write(row);
+      boolean isUpdateSchema = dataWriter.write(row, schema);
+      if (isUpdateSchema) {
+        /**
+         * 更新过schema, 文件路径和offset发送变更.重新记录pos-delete 信息
+         */
+        PathOffset pathOffsetAtRecord = PathOffset.of(dataWriter.currentPath(), dataWriter.currentRows() - 1);
+        // Adding a pos-delete to replace the old path-offset.
+        insertedRowMap.put(copiedKey, pathOffsetAtRecord);
+      }
     }
 
     /**
@@ -169,9 +182,9 @@ public abstract class BaseTaskWriter<T> implements TaskWriter<T> {
      *
      * @param row the given row to delete.
      */
-    public void delete(T row) throws IOException {
+    public void delete(T row, Schema schema)  throws IOException {
       if (!internalPosDelete(structProjection.wrap(asStructLike(row)))) {
-        eqDeleteWriter.write(row);
+        eqDeleteWriter.write(row, schema);
       }
     }
 
@@ -181,9 +194,16 @@ public abstract class BaseTaskWriter<T> implements TaskWriter<T> {
      *
      * @param key is the projected data whose columns are the same as the equality fields.
      */
-    public void deleteKey(T key) throws IOException {
+    public void deleteKey(T key, Schema schema) throws IOException {
+      // todo 判断schema,更新rolling data write的schemea
+      //if (schema.schemaId() != dataWriter.getSchema().schemaId()) {
+      //    dataWriter.closeCurrent();
+      //    dataWriter.openCurrent(schema);
+      //    dataWriter.isPreDeletedTriggerNewWriter = true;
+      //    dataWriter.setSchema(schema);
+      //}
       if (!internalPosDelete(asStructLikeKey(key))) {
-        eqDeleteWriter.write(key);
+        eqDeleteWriter.write(key, schema);
       }
     }
 
@@ -259,13 +279,21 @@ public abstract class BaseTaskWriter<T> implements TaskWriter<T> {
     private EncryptedOutputFile currentFile = null;
     private W currentWriter = null;
     private long currentRows = 0;
+    private Schema schema;
+    /**
+     * delete 数据是否已经触发更新了writer
+     * eg. update log / upsert
+     */
+    @Deprecated
+    public boolean isPreDeletedTriggerNewWriter;
 
-    private BaseRollingWriter(StructLike partitionKey) {
+    private BaseRollingWriter(StructLike partitionKey, Schema schema) {
       this.partitionKey = partitionKey;
-      openCurrent();
+      this.schema = schema;
+      openCurrent(schema);
     }
 
-    abstract W newWriter(EncryptedOutputFile file, StructLike partition);
+    abstract W newWriter(EncryptedOutputFile file, StructLike partition, Schema schema);
 
     abstract long length(W writer);
 
@@ -273,14 +301,27 @@ public abstract class BaseTaskWriter<T> implements TaskWriter<T> {
 
     abstract void complete(W closedWriter);
 
-    public void write(T record) throws IOException {
+    public boolean write(T record, Schema schema) throws IOException {
+      boolean isUpdateSchema = false;
+      //TODO 判断是否需要切换writer
+      int newSchemaId = schema.schemaId();
+      int oldSchemaId = this.schema.schemaId();
+      if (newSchemaId != oldSchemaId && !isPreDeletedTriggerNewWriter) {
+        LOG.warn("新数据schemaId[{}]与旧schemaId[{}]不等! 新schema[{}], 旧schema[{}]", newSchemaId, oldSchemaId, schema, this.schema);
+        closeCurrent();
+        openCurrent(schema);
+        // 更新writer schema属性
+        this.schema = schema;
+        isUpdateSchema = true;
+      }
       write(currentWriter, record);
       this.currentRows++;
-
+      isPreDeletedTriggerNewWriter = false;
       if (shouldRollToNewFile()) {
         closeCurrent();
-        openCurrent();
+        openCurrent(this.schema);
       }
+      return isUpdateSchema;
     }
 
     public CharSequence currentPath() {
@@ -292,7 +333,7 @@ public abstract class BaseTaskWriter<T> implements TaskWriter<T> {
       return currentRows;
     }
 
-    private void openCurrent() {
+    public void openCurrent(Schema schema) {
       if (partitionKey == null) {
         // unpartitioned
         this.currentFile = fileFactory.newOutputFile();
@@ -300,7 +341,7 @@ public abstract class BaseTaskWriter<T> implements TaskWriter<T> {
         // partitioned
         this.currentFile = fileFactory.newOutputFile(partitionKey);
       }
-      this.currentWriter = newWriter(currentFile, partitionKey);
+      this.currentWriter = newWriter(currentFile, partitionKey, schema);
       this.currentRows = 0;
     }
 
@@ -343,15 +384,14 @@ public abstract class BaseTaskWriter<T> implements TaskWriter<T> {
   }
 
   protected class RollingFileWriter extends BaseRollingWriter<DataWriter<T>> {
-    public RollingFileWriter(StructLike partitionKey) {
-      super(partitionKey);
+    public RollingFileWriter(StructLike partitionKey, Schema schema) {
+      super(partitionKey, schema);
     }
 
     @Override
-    DataWriter<T> newWriter(EncryptedOutputFile file, StructLike partitionKey) {
-      return appenderFactory.newDataWriter(file, format, partitionKey);
+    DataWriter<T> newWriter(EncryptedOutputFile file, StructLike partitionKey, Schema schema) {
+      return appenderFactory.newDataWriter(file, format, partitionKey, schema);
     }
-
     @Override
     long length(DataWriter<T> writer) {
       return writer.length();
@@ -369,13 +409,13 @@ public abstract class BaseTaskWriter<T> implements TaskWriter<T> {
   }
 
   protected class RollingEqDeleteWriter extends BaseRollingWriter<EqualityDeleteWriter<T>> {
-    RollingEqDeleteWriter(StructLike partitionKey) {
-      super(partitionKey);
+    RollingEqDeleteWriter(StructLike partitionKey, Schema schema) {
+      super(partitionKey, schema);
     }
 
     @Override
-    EqualityDeleteWriter<T> newWriter(EncryptedOutputFile file, StructLike partitionKey) {
-      return appenderFactory.newEqDeleteWriter(file, format, partitionKey);
+    EqualityDeleteWriter<T> newWriter(EncryptedOutputFile file, StructLike partitionKey, Schema schema) {
+      return appenderFactory.newEqDeleteWriter(file, format, partitionKey, schema);
     }
 
     @Override

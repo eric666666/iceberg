@@ -18,17 +18,14 @@
  */
 package org.apache.iceberg.flink;
 
-import java.net.URL;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.flink.configuration.GlobalConfiguration;
 import org.apache.flink.runtime.util.HadoopUtils;
 import org.apache.flink.table.catalog.Catalog;
 import org.apache.flink.table.factories.CatalogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.catalog.Namespace;
@@ -37,6 +34,18 @@ import org.apache.iceberg.relocated.com.google.common.base.Strings;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.util.PropertyUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 /**
  * A Flink Catalog factory implementation that creates {@link FlinkCatalog}.
@@ -59,7 +68,7 @@ import org.apache.iceberg.util.PropertyUtil;
  * {@link #createCatalogLoader(String, Map, Configuration)}.
  */
 public class FlinkCatalogFactory implements CatalogFactory {
-
+  private static final Logger LOG = LoggerFactory.getLogger(FlinkCatalogFactory.class);
   // Can not just use "type", it conflicts with CATALOG_TYPE.
   public static final String ICEBERG_CATALOG_TYPE = "catalog-type";
   public static final String ICEBERG_CATALOG_TYPE_HADOOP = "hadoop";
@@ -74,12 +83,13 @@ public class FlinkCatalogFactory implements CatalogFactory {
 
   public static final String TYPE = "type";
   public static final String PROPERTY_VERSION = "property-version";
+  public static final String DIST_KEYTAB = "dist-keytab";
 
   /**
    * Create an Iceberg {@link org.apache.iceberg.catalog.Catalog} loader to be used by this Flink
    * catalog adapter.
    *
-   * @param name Flink's catalog name
+   * @param name       Flink's catalog name
    * @param properties Flink's catalog properties
    * @param hadoopConf Hadoop configuration for catalog
    * @return an Iceberg catalog loader
@@ -101,12 +111,41 @@ public class FlinkCatalogFactory implements CatalogFactory {
     String catalogType = properties.getOrDefault(ICEBERG_CATALOG_TYPE, ICEBERG_CATALOG_TYPE_HIVE);
     switch (catalogType.toLowerCase(Locale.ENGLISH)) {
       case ICEBERG_CATALOG_TYPE_HIVE:
+        String hiveConfDir = properties.get(HIVE_CONF_DIR);
+
+        // zengbao 05-06
+        String keytabFileName = properties.get(DIST_KEYTAB);
+        if (StringUtils.isNotBlank(keytabFileName) && StringUtils.isNotBlank(hiveConfDir)) {
+          // 下载keytab文件
+          String tempDir =
+              FileUtils.getTempDirectory().getAbsolutePath() + File.separator + "stp-system-conf";
+
+          Path f = new Path(keytabFileName);
+          FileSystem fs = null;
+          try {
+            fs = f.getFileSystem(new Configuration());
+
+            if (!fs.exists(f)) {
+              throw new FileNotFoundException(
+                  "Keytab file " + f.getName() + "is not found in " + keytabFileName);
+            }
+
+            fs.copyToLocalFile(f, new Path(tempDir, f.getName()));
+          } catch (IOException e) {
+            throw new RuntimeException(e);
+          }
+        }
+
         // The values of properties 'uri', 'warehouse', 'hive-conf-dir' are allowed to be null, in
         // that case it will
         // fallback to parse those values from hadoop configuration which is loaded from classpath.
-        String hiveConfDir = properties.get(HIVE_CONF_DIR);
         String hadoopConfDir = properties.get(HADOOP_CONF_DIR);
-        Configuration newHadoopConf = mergeHiveConf(hadoopConf, hiveConfDir, hadoopConfDir);
+        Configuration newHadoopConf = null;
+        try {
+          newHadoopConf = mergeHiveConf(hadoopConf, hiveConfDir, hadoopConfDir);
+        } catch (IOException e) {
+          throw new RuntimeException(e);
+        }
         return CatalogLoader.hive(name, newHadoopConf, properties);
 
       case ICEBERG_CATALOG_TYPE_HADOOP:
@@ -140,7 +179,7 @@ public class FlinkCatalogFactory implements CatalogFactory {
   }
 
   protected Catalog createCatalog(
-      String name, Map<String, String> properties, Configuration hadoopConf) {
+      String name, Map<String, String> properties, Configuration hadoopConf)  {
     CatalogLoader catalogLoader = createCatalogLoader(name, properties, hadoopConf);
     String defaultDatabase = properties.getOrDefault(DEFAULT_DATABASE, DEFAULT_DATABASE_NAME);
 
@@ -173,8 +212,28 @@ public class FlinkCatalogFactory implements CatalogFactory {
   }
 
   private static Configuration mergeHiveConf(
-      Configuration hadoopConf, String hiveConfDir, String hadoopConfDir) {
+      Configuration hadoopConf, String hiveConfDir, String hadoopConfDir) throws IOException {
     Configuration newConf = new Configuration(hadoopConf);
+
+    // 22-05-06 增加hive-site.xml hdfs路径的支持
+    if (StringUtils.isNotBlank(hiveConfDir) && hiveConfDir.startsWith("hdfs:")) {
+      String tempDir =
+          FileUtils.getTempDirectory().getAbsolutePath() + File.separator + "stp-system-conf";
+      String hiveSitePathStr = hiveConfDir + "/hive-site.xml";
+      Path hiveSiteHdfsPath = new Path(hiveSitePathStr);
+      FileSystem fs = hiveSiteHdfsPath.getFileSystem(newConf);
+
+      if (!fs.exists(hiveSiteHdfsPath)) {
+        throw new FileNotFoundException(hiveSitePathStr + " is not exists!");
+      } else {
+        Path hiveSiteLocalPath = new Path(tempDir + File.separator + "/hive-site.xml");
+        fs.copyToLocalFile(hiveSiteHdfsPath, hiveSiteLocalPath);
+        newConf.addResource(hiveSiteLocalPath);
+      }
+
+      return newConf;
+    }
+
     if (!Strings.isNullOrEmpty(hiveConfDir)) {
       Preconditions.checkState(
           Files.exists(Paths.get(hiveConfDir, "hive-site.xml")),

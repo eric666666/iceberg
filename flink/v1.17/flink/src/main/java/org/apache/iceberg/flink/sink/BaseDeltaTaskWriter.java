@@ -16,6 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iceberg.flink.sink;
 
 import java.io.IOException;
@@ -74,30 +75,31 @@ abstract class BaseDeltaTaskWriter extends BaseTaskWriter<RowData> {
   }
 
   @Override
-  public void write(RowData row) throws IOException {
+  public void write(RowData row, Schema schema) throws IOException {
     RowDataDeltaWriter writer = route(row);
-
     switch (row.getRowKind()) {
       case INSERT:
       case UPDATE_AFTER:
         if (upsert) {
-          writer.deleteKey(keyProjection.wrap(row));
+          writer.deleteKey(keyProjection.wrap(row), schema);
         }
-        writer.write(row);
+        writer.write(row, schema);
         break;
 
       case UPDATE_BEFORE:
         if (upsert) {
+          // 部分修改了主键情况可能会有错误
+          //writer.deleteKey(keyProjection.wrap(row), schema);
           break; // UPDATE_BEFORE is not necessary for UPSERT, we do nothing to prevent delete one
           // row twice
         }
-        writer.delete(row);
+        writer.delete(row, schema);
         break;
       case DELETE:
         if (upsert) {
-          writer.deleteKey(keyProjection.wrap(row));
+          writer.deleteKey(keyProjection.wrap(row), schema);
         } else {
-          writer.delete(row);
+          writer.delete(row, schema);
         }
         break;
 

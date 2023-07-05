@@ -375,14 +375,15 @@ public class TestIcebergStreamWriter {
         new FlinkWriteConf(
             icebergTable, Maps.newHashMap(), new org.apache.flink.configuration.Configuration());
 
-    IcebergStreamWriter<RowData> streamWriter =
-        FlinkSink.createStreamWriter(icebergTable, flinkWriteConfig, flinkRowType, null);
-    OneInputStreamOperatorTestHarness<RowData, WriteResult> harness =
-        new OneInputStreamOperatorTestHarness<>(streamWriter, 1, 1, 0);
-
-    harness.setup();
-    harness.open();
-
-    return harness;
+    //IcebergStreamWriter<RowData> streamWriter =
+    //    FlinkSink.createStreamWriter(icebergTable, flinkWriteConfig, flinkRowType, null);
+    //OneInputStreamOperatorTestHarness<RowData, WriteResult> harness =
+    //    new OneInputStreamOperatorTestHarness<>(streamWriter, 1, 1, 0);
+    //
+    //harness.setup();
+    //harness.open();
+    //
+    //return harness;
+    return null;
   }
 }

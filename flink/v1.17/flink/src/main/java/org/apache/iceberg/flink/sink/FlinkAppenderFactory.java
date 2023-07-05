@@ -16,12 +16,14 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 package org.apache.iceberg.flink.sink;
 
 import java.io.IOException;
 import java.io.Serializable;
 import java.io.UncheckedIOException;
 import java.util.Map;
+import javax.annotation.Nullable;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.StringData;
 import org.apache.flink.table.types.logical.RowType;
@@ -49,8 +51,8 @@ import org.apache.iceberg.parquet.Parquet;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 
 public class FlinkAppenderFactory implements FileAppenderFactory<RowData>, Serializable {
-  private final Schema schema;
-  private final RowType flinkSchema;
+  private  Schema schema;
+  private  RowType flinkSchema;
   private final Map<String, String> props;
   private final PartitionSpec spec;
   private final int[] equalityFieldIds;
@@ -98,7 +100,17 @@ public class FlinkAppenderFactory implements FileAppenderFactory<RowData>, Seria
   }
 
   @Override
-  public FileAppender<RowData> newAppender(OutputFile outputFile, FileFormat format) {
+  public FileAppender<RowData> newAppender(OutputFile outputFile, FileFormat format, Schema schema) {
+    if (schema == null) {
+      schema = this.schema;
+    }
+
+    if (schema.schemaId() != this.schema.schemaId()) {
+      this.schema = schema;
+      this.flinkSchema = FlinkSchemaUtil.convert(schema);
+    }
+    flinkSchema = FlinkSchemaUtil.convert(schema);
+
     MetricsConfig metricsConfig = MetricsConfig.forTable(table);
     try {
       switch (format) {
@@ -139,20 +151,15 @@ public class FlinkAppenderFactory implements FileAppenderFactory<RowData>, Seria
   }
 
   @Override
-  public DataWriter<RowData> newDataWriter(
-      EncryptedOutputFile file, FileFormat format, StructLike partition) {
+  public DataWriter<RowData> newDataWriter(EncryptedOutputFile file, FileFormat format, StructLike partition, Schema schema) {
     return new DataWriter<>(
-        newAppender(file.encryptingOutputFile(), format),
-        format,
-        file.encryptingOutputFile().location(),
-        spec,
-        partition,
-        file.keyMetadata());
+        newAppender(file.encryptingOutputFile(), format, schema), format,
+        file.encryptingOutputFile().location(), spec, partition, file.keyMetadata());
   }
 
   @Override
-  public EqualityDeleteWriter<RowData> newEqDeleteWriter(
-      EncryptedOutputFile outputFile, FileFormat format, StructLike partition) {
+  public EqualityDeleteWriter<RowData> newEqDeleteWriter(EncryptedOutputFile outputFile, FileFormat format,
+                                                         StructLike partition, Schema schema) {
     Preconditions.checkState(
         equalityFieldIds != null && equalityFieldIds.length > 0,
         "Equality field ids shouldn't be null or empty when creating equality-delete writer");
@@ -214,8 +221,11 @@ public class FlinkAppenderFactory implements FileAppenderFactory<RowData>, Seria
   }
 
   @Override
-  public PositionDeleteWriter<RowData> newPosDeleteWriter(
-      EncryptedOutputFile outputFile, FileFormat format, StructLike partition) {
+  public PositionDeleteWriter<RowData> newPosDeleteWriter(EncryptedOutputFile outputFile, FileFormat format,
+                                                          StructLike partition, @Nullable Schema schema) {
+    if (schema == null) {
+      schema = this.schema;
+    }
     MetricsConfig metricsConfig = MetricsConfig.forPositionDelete(table);
     try {
       switch (format) {
